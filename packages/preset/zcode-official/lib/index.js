@@ -28,8 +28,8 @@ var TODO_READ_DESCRIPTION = "Read the current session todo list";
 function todoPriorityOf(agent, content) {
   return priorities.get(String(agent.session.id))?.get(content) ?? "medium";
 }
-async function readTodos(ctx, agent) {
-  const snapshot = ctx.sessionProjections.snapshot(agent.session, ["todos"]);
+async function readTodos(ctx2, agent) {
+  const snapshot = ctx2.sessionProjections.snapshot(agent.session, ["todos"]);
   const stripped = snapshot.values["todos"] ?? [];
   const sidecar = priorities.get(String(agent.session.id));
   return stripped.map((item) => ({
@@ -38,8 +38,8 @@ async function readTodos(ctx, agent) {
     priority: sidecar?.get(item.content) ?? "medium"
   }));
 }
-function registerTodoTools(ctx) {
-  ctx.tools.register(defineTool({
+function registerTodoTools(ctx2) {
+  ctx2.tools.register(defineTool({
     name: "todo_write",
     description: TODO_WRITE_DESCRIPTION,
     parameters: {
@@ -132,7 +132,7 @@ function registerTodoTools(ctx) {
         });
       }
       if (active > 1) throw new Error(`invalid todos: at most one task may be in_progress (got ${active})`);
-      const oldTodos = await readTodos(ctx, exec.agent);
+      const oldTodos = await readTodos(ctx2, exec.agent);
       exec.agent.session.append("todo/write", {
         todos: todos.map((todo) => ({ content: todo.content, status: todo.status }))
       });
@@ -143,7 +143,7 @@ function registerTodoTools(ctx) {
     },
     presentCall: (args) => ({ card: "generic", title: "Update todo list", kind: "other", rawInput: args.todos })
   }));
-  ctx.tools.register(defineTool({
+  ctx2.tools.register(defineTool({
     name: "todo_read",
     description: TODO_READ_DESCRIPTION,
     parameters: {},
@@ -174,7 +174,7 @@ function registerTodoTools(ctx) {
     },
     async execute(_args, exec) {
       if (!exec.agent) throw new Error("todo_read requires an owning agent session");
-      return { todos: await readTodos(ctx, exec.agent) };
+      return { todos: await readTodos(ctx2, exec.agent) };
     },
     presentCall: () => ({ card: "generic", title: "Read todo list", kind: "other", rawInput: {} })
   }));
@@ -227,8 +227,8 @@ function validateOfficial(input) {
     }
   }
 }
-function registerAskUserShadow(ctx) {
-  ctx.tools.register(defineTool2({
+function registerAskUserShadow(ctx2) {
+  ctx2.tools.register(defineTool2({
     name: "ask_user_question",
     description: ASK_USER_QUESTION_DESCRIPTION,
     parameters: {
@@ -288,7 +288,7 @@ function registerAskUserShadow(ctx) {
     },
     async execute(args, exec) {
       validateOfficial(args);
-      const result = await ctx.userQuestions.ask({
+      const result = await ctx2.userQuestions.ask({
         questions: args.questions.map((question) => ({
           // Official has no caller id; mint one so the seam can echo answers.
           id: crypto.randomUUID(),
@@ -315,6 +315,189 @@ function registerAskUserShadow(ctx) {
       };
     }
   }));
+}
+
+// src/tools/compaction-zcode.ts
+import { BasicCompactionEngine } from "@deepseek-ai/dsh-compaction-basic";
+import { contentHasImage, BlockAssembler, LlmError } from "@deepseek-ai/dsh-llm";
+
+// src/official/compact-prompt.ts
+var NO_TOOLS_PREAMBLE = `CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
+
+- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool.
+- You already have all the context you need in the conversation above.
+- Tool calls will be REJECTED and will waste your only turn \u2014 you will fail the task.
+- Your entire response must be plain text: an <analysis> block followed by a <summary> block.
+
+`;
+var NO_TOOLS_TRAILER = "\n\nREMINDER: Do NOT call any tools. Respond with plain text only \u2014 an <analysis> block followed by a <summary> block. Tool calls will be rejected and you will fail the task.";
+var BASE_COMPACT_PROMPT = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
+This summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context.
+
+Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points. In your analysis process:
+
+1. Chronologically analyze each message and section of the conversation. For each section thoroughly identify:
+   - The user's explicit requests and intents
+   - Your approach to addressing the user's requests
+   - Key decisions, technical concepts and code patterns
+   - Specific details like:
+     - file names
+     - full code snippets
+     - function signatures
+     - file edits
+   - Errors that you ran into and how you fixed them
+   - Pay special attention to specific user feedback that you received, especially if the user told you to do something differently.
+   - Note any security-relevant instructions or constraints the user stated (e.g., sensitive files or data to avoid, operations that must not be performed, credential or secret handling rules). These MUST be preserved verbatim in the summary so they continue to apply after compaction.
+2. Double-check for technical accuracy and completeness, addressing each required element thoroughly.
+
+Your summary should include the following sections:
+
+1. Primary Request and Intent: Capture all of the user's explicit requests and intents in detail
+2. Key Technical Concepts: List all important technical concepts, technologies, and frameworks discussed.
+3. Files and Code Sections: Enumerate specific files and code sections examined, modified, or created. Pay special attention to the most recent messages and include full code snippets where applicable and include a summary of why this file read or edit is important.
+4. Errors and fixes: List all errors that you ran into, and how you fixed them. Pay special attention to specific user feedback that you received, especially if the user told you to do something differently.
+5. Problem Solving: Document problems solved and any ongoing troubleshooting efforts.
+6. All user messages: List ALL user messages that are not tool results. These are critical for understanding the users' feedback and changing intent. Preserve any security-relevant instructions or constraints verbatim so they remain in effect after compaction.
+7. Pending Tasks: Outline any pending tasks that you have explicitly been asked to work on.
+8. Current Work: Describe in detail precisely what was being worked on immediately before this summary request, paying special attention to the most recent messages from both user and assistant. Include file names and code snippets where applicable.
+9. Optional Next Step: List the next step that you will take that is related to the most recent work you were doing. IMPORTANT: ensure that this step is DIRECTLY in line with the user's most recent explicit requests, and the task you were working on immediately before this summary request. If your last task was concluded, then only list next steps if they are explicitly in line with the users request. Do not start on tangential requests or really old requests that were already completed without confirming with the user first.
+                       If there is a next step, include direct quotes from the most recent conversation showing exactly what task you were working on and where you left off. This should be verbatim to ensure there's no drift in task interpretation.
+
+Here's an example of how your output should be structured:
+
+<example>
+<analysis>
+[Your thought process, ensuring all points are covered thoroughly and accurately]
+</analysis>
+
+<summary>
+1. Primary Request and Intent:
+   [Detailed description]
+
+2. Key Technical Concepts:
+   - [Concept 1]
+   - [Concept 2]
+   - [...]
+
+3. Files and Code Sections:
+   - [File Name 1]
+      - [Summary of why this file is important]
+      - [Summary of the changes made to this file, if any]
+      - [Important Code Snippet]
+   - [File Name 2]
+      - [Important Code Snippet]
+   - [...]
+
+4. Errors and fixes:
+    - [Detailed description of error 1]:
+      - [How you fixed the error]
+      - [User feedback on the error if any]
+    - [...]
+
+5. Problem Solving:
+   [Description of solved problems and ongoing troubleshooting]
+
+6. All user messages:${" "}
+    - [Detailed non tool use user message]
+    - [...]
+
+7. Pending Tasks:
+   - [Task 1]
+   - [Task 2]
+   - [...]
+
+8. Current Work:
+   [Precise description of current work]
+
+9. Optional Next Step:
+   [Optional Next step to take]
+
+</summary>
+</example>
+
+Please provide your summary based on the conversation so far, following this structure and ensuring precision and thoroughness in your response.${" "}
+
+There may be additional summarization instructions provided in the included context. If so, remember to follow these instructions when creating the above summary. Examples of instructions include:
+<example>
+## Compact Instructions
+When summarizing the conversation focus on typescript code changes and also remember the mistakes you made and how you fixed them.
+</example>
+
+<example>
+# Summary instructions
+When you are using compact - please focus on test output and code changes. Include file reads verbatim.
+</example>`;
+function buildCompactPrompt(customInstructions) {
+  const customInstructionBlock = customInstructions?.trim() ? `
+
+Additional Instructions:
+${customInstructions}` : "";
+  return `${NO_TOOLS_PREAMBLE}${BASE_COMPACT_PROMPT}${customInstructionBlock}${NO_TOOLS_TRAILER}`;
+}
+
+// src/tools/compaction-zcode.ts
+var ZcodeCompactionEngine = class extends BasicCompactionEngine {
+  constructor(ctx2) {
+    super(ctx2);
+  }
+  /**
+   * Official-prompt summarization: same cache-reusing `ctx.llm.stream()` call
+   * as the core engine, with the final user message carrying the official
+   * 9-section prompt instead of the core Markdown-checkpoint instruction.
+   */
+  async summarize(input, agent, signal) {
+    const target = conversationTarget(agent);
+    const config = target === void 0 ? this.config : resolveTargetPolicy(this.config, target);
+    const instruction = buildCompactPrompt(void 0) + "\n\n- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.";
+    const assembler = new BlockAssembler();
+    const messages = [
+      ...input.messages,
+      {
+        role: "user",
+        content: [{ type: "text", text: instruction }]
+      }
+    ];
+    const options = {
+      provider: target.provider,
+      model: target.model,
+      messages,
+      ...input.tools === void 0 ? {} : { tools: [...input.tools] },
+      maxTokens: config.maxTokens,
+      sessionId: agent.session.id,
+      purpose: "compaction",
+      ...signal === void 0 ? {} : { signal }
+    };
+    for await (const chunk of ctx.llm.stream(options)) assembler.push(chunk);
+    const finish = assembler.finish;
+    const error = finish.kind === "error" || finish.kind === "aborted" ? new LlmError(finish.failure.message, finish.failure.code, finish.failure) : finish.kind === "max-tokens" ? Object.assign(new Error("summarization truncated at the token cap (incomplete checkpoint)"), { code: "MAX_TOKENS" }) : void 0;
+    if (error !== void 0) throw error;
+    const rawOutput = assembler.blocks();
+    if (contentHasImage(rawOutput)) {
+      throw new LlmError("compaction summary cannot contain image output", "UNSUPPORTED_CONTENT");
+    }
+    const summary = rawOutput.filter((block) => block.type === "text");
+    if (!summary.some((block) => block.text.trim().length > 0)) {
+      throw new Error("summarization produced no text summary content");
+    }
+    return {
+      summary,
+      rawOutput,
+      llmStreamCall: true,
+      provider: options.provider,
+      model: options.model,
+      maxTokens: config.maxTokens,
+      ...assembler.usage === void 0 ? {} : { usage: assembler.usage }
+    };
+  }
+};
+function conversationTarget(agent) {
+  const provider = agent.options.provider;
+  const model = agent.options.model;
+  return provider !== void 0 && provider.length > 0 && model !== void 0 && model.length > 0 ? { provider, model } : void 0;
+}
+function resolveTargetPolicy(config, target) {
+  const policy = config.modelPolicies?.find((p) => p.provider === target.provider && p.model === target.model);
+  return policy === void 0 ? config : { ...config, ...policy };
 }
 
 // src/tools/agent.ts
@@ -784,11 +967,11 @@ function agentToolDescription() {
     // this deployment ships no CreateWorkflow tool.
   ].join("\n");
 }
-function registerAgentTool(ctx) {
+function registerAgentTool(ctx2) {
   const cwd = process.cwd();
   const shapes = childShapes(cwd);
   const description = agentToolDescription();
-  ctx.tools.register(defineTool3({
+  ctx2.tools.register(defineTool3({
     name: "agent",
     description,
     parameters: {
@@ -846,7 +1029,7 @@ function registerAgentTool(ctx) {
         toolFilter: { allow: [...shape.toolFilter.allow] }
       };
       if (runInBackground && shape.continuable) {
-        const started = await ctx.subagents.startContinuable({
+        const started = await ctx2.subagents.startContinuable({
           provider: "spawn",
           label: args.description,
           request: startRequest,
@@ -855,7 +1038,7 @@ function registerAgentTool(ctx) {
         return { kind: "continuable", subagentId: String(started.childId) };
       }
       if (runInBackground) {
-        const jobs = ctx.get("jobs");
+        const jobs = ctx2.get("jobs");
         if (jobs === void 0) {
           throw new Error("background jobs unavailable: load @deepseek-ai/dsh-jobs and @deepseek-ai/dsh-tool-jobs");
         }
@@ -865,7 +1048,7 @@ function registerAgentTool(ctx) {
           owner: SessionId(parent.session.id),
           run: () => {
             const controller = new AbortController();
-            const start = ctx.subagents.start("spawn", { ...startRequest, signal: controller.signal });
+            const start = ctx2.subagents.start("spawn", { ...startRequest, signal: controller.signal });
             return {
               cancel: (reason) => {
                 controller.abort(reason ?? "background agent task killed");
@@ -876,7 +1059,7 @@ function registerAgentTool(ctx) {
         });
         return { kind: "background", backgroundTaskId: String(id) };
       }
-      const run = await ctx.subagents.start("spawn", { ...startRequest, signal: exec.signal });
+      const run = await ctx2.subagents.start("spawn", { ...startRequest, signal: exec.signal });
       return await settleForegroundRun(run);
     }
   }));
@@ -1299,9 +1482,13 @@ var SURFACE_NOTES = [
   "- `EnterPlanMode` / `ExitPlanMode`: plan mode in this deployment is entered by the user (`/plan`); `exit_plan_mode` submits the plan for approval. A user's conversational agreement approves nothing \u2014 only exiting plan mode requests approval.",
   "- `SendMessage`: continue a background subagent with a follow-up message instead of starting a new one (`send_message`).",
   "- `TaskOutput` is DEPRECATED upstream: never poll for background results; collect finished background work with `job_output` (wait only when genuinely blocked) and stop irrelevant work with `job_kill` (`TaskStop`).",
-  "- `ApplyPatch`: never call a patch tool directly \u2014 perform the same edit with `write`/`edit` (upstream dispatches ApplyPatch to Write/Edit).",
+  "- `ApplyPatch`: the official registry ships it disabled (commented out) \u2014 perform patch-style edits with `write`/`edit` directly.",
   "- `ReadSessionContext`: read context from another persisted session with the `session_search`, `session_event_search`, `session_trace`, `session_event_trace`, and `session_event_read` tools (e.g. when the user references a prior session or asks to continue it).",
-  "- `CreateWorkflow`/`SaveWorkflow`/`AmendWorkflow` and the other dynamic-workflow tools are not available in this deployment (the official gate-closed branch): never fabricate workflow tool calls."
+  "- `CreateWorkflow`/`SaveWorkflow`/`AmendWorkflow` and the other dynamic-workflow tools are not available in this deployment (the official gate-closed branch): never fabricate workflow tool calls.",
+  "- `WebFetch` official behavior details: cross-host redirects are returned to you as a redirect notice rather than followed (call again with the new URL); responses are cached 15 minutes per URL; private-network and non-public-IP targets are blocked by an egress guard. This deployment follows same-origin redirects and does not implement the 15-minute cache \u2014 re-fetch when freshness matters.",
+  "- `SubmitResult`/`Escalate`/`RespondToCoordinator` exist only inside official dynamic-workflow runs; they are not registered here.",
+  "- `CronCreate`/`CronList`/`CronUpdate`/`CronDelete` (persistent workspace automations) and `OffPeakCreate`/`OffPeakList` (server off-peak queue) have no counterpart in this deployment; for in-session scheduled reminders use the available schedule tools.",
+  "- The official `Js` (node_repl) tool is disabled by default upstream too; this deployment's equivalent is `run_code` (PTC mode)."
 ];
 function buildSections(env) {
   const info = collectEnvInfo(env.cwd);
@@ -1361,16 +1548,23 @@ Today's date is ${localIsoDate()}.` }
   return sections;
 }
 var inject = ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions"];
-function apply(ctx) {
+function apply(ctx2, config = {}) {
+  if (config.role === "compaction") {
+    ctx2.plugin(ZcodeCompactionEngine);
+    return;
+  }
   const env = { cwd: process.cwd() };
-  registerTodoTools(ctx);
-  registerAgentTool(ctx);
-  registerAskUserShadow(ctx);
-  ctx.on("agent/created", async ({ agent }) => {
+  registerTodoTools(ctx2);
+  registerAgentTool(ctx2);
+  registerAskUserShadow(ctx2);
+  if (config.engine === "zcode") {
+    ctx2.plugin(ZcodeCompactionEngine);
+  }
+  ctx2.on("agent/created", async ({ agent }) => {
     installReminders(
       agent.ctx,
       (agentArg) => {
-        const snapshot = ctx.sessionProjections.snapshot(agentArg.session, ["todos"]);
+        const snapshot = ctx2.sessionProjections.snapshot(agentArg.session, ["todos"]);
         const stripped = snapshot.values["todos"] ?? [];
         return Promise.resolve(stripped.map((item) => ({
           content: item.content,
@@ -1380,20 +1574,20 @@ function apply(ctx) {
       },
       (agentArg) => {
         try {
-          return ctx.planMode.get(agentArg).active;
+          return ctx2.planMode.get(agentArg).active;
         } catch {
           return false;
         }
       }
     );
   });
-  ctx.on("tools/post-execute", async (exec, _result, next) => {
+  ctx2.on("tools/post-execute", async (exec, _result, next) => {
     if (exec.name === "todo_write" && exec.agent !== void 0) noteTodoWrite(exec.agent);
     return next();
   });
-  ctx.effect(function* () {
+  ctx2.effect(function* () {
     for (const section of buildSections(env)) {
-      yield ctx.systemPrompt.section({
+      yield ctx2.systemPrompt.section({
         name: section.name,
         order: section.order,
         text: section.text
@@ -1408,6 +1602,7 @@ export {
   EXPLORE_AGENT_ALLOWED_TOOLS,
   EXPLORE_AGENT_TYPE,
   GENERAL_PURPOSE_AGENT_TYPE,
+  ZcodeCompactionEngine,
   apply,
   buildAgentProviderDescription,
   buildBashProviderDescription,

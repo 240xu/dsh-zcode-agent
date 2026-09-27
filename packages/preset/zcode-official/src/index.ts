@@ -25,6 +25,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-plan-mode'
 import { registerTodoTools, todoPriorityOf } from './tools/todo.ts'
 import { registerAskUserShadow } from './tools/ask-user-shadow.ts'
+import { ZcodeCompactionEngine } from './tools/compaction-zcode.ts'
 import { registerAgentTool } from './tools/agent.ts'
 import { installReminders, noteTodoWrite } from './tools/reminders.ts'
 import { buildSecurityNotice, buildHarnessBlock } from './official/identity.ts'
@@ -93,9 +94,13 @@ const SURFACE_NOTES: readonly string[] = [
   '- `EnterPlanMode` / `ExitPlanMode`: plan mode in this deployment is entered by the user (`/plan`); `exit_plan_mode` submits the plan for approval. A user\'s conversational agreement approves nothing — only exiting plan mode requests approval.',
   '- `SendMessage`: continue a background subagent with a follow-up message instead of starting a new one (`send_message`).',
   '- `TaskOutput` is DEPRECATED upstream: never poll for background results; collect finished background work with `job_output` (wait only when genuinely blocked) and stop irrelevant work with `job_kill` (`TaskStop`).',
-  '- `ApplyPatch`: never call a patch tool directly — perform the same edit with `write`/`edit` (upstream dispatches ApplyPatch to Write/Edit).',
+  '- `ApplyPatch`: the official registry ships it disabled (commented out) — perform patch-style edits with `write`/`edit` directly.',
   '- `ReadSessionContext`: read context from another persisted session with the `session_search`, `session_event_search`, `session_trace`, `session_event_trace`, and `session_event_read` tools (e.g. when the user references a prior session or asks to continue it).',
   '- `CreateWorkflow`/`SaveWorkflow`/`AmendWorkflow` and the other dynamic-workflow tools are not available in this deployment (the official gate-closed branch): never fabricate workflow tool calls.',
+  '- `WebFetch` official behavior details: cross-host redirects are returned to you as a redirect notice rather than followed (call again with the new URL); responses are cached 15 minutes per URL; private-network and non-public-IP targets are blocked by an egress guard. This deployment follows same-origin redirects and does not implement the 15-minute cache — re-fetch when freshness matters.',
+  '- `SubmitResult`/`Escalate`/`RespondToCoordinator` exist only inside official dynamic-workflow runs; they are not registered here.',
+  '- `CronCreate`/`CronList`/`CronUpdate`/`CronDelete` (persistent workspace automations) and `OffPeakCreate`/`OffPeakList` (server off-peak queue) have no counterpart in this deployment; for in-session scheduled reminders use the available schedule tools.',
+  '- The official `Js` (node_repl) tool is disabled by default upstream too; this deployment\'s equivalent is `run_code` (PTC mode).',
 ]
 
 export interface ZcodeSection {
@@ -169,15 +174,32 @@ export function buildSections(env: ZcodeEnv): ZcodeSection[] {
 }
 
 /** Tool + prompt dependencies: sections ride systemPrompt; the official todo
- * and Agent rows shadow the core rows inside the preset scope. */
+ * and Agent rows shadow the core rows inside the preset scope; the compaction
+ * engine rides the compaction realm. */
 export const inject = ['systemPrompt', 'tools', 'sessionProjections', 'subagents', 'userQuestions'] as const
 
-export function apply(ctx: Context): void {
+export interface ZcodePresetConfig {
+  /** When 'zcode', mount ZcodeCompactionEngine instead of the core row. */
+  engine?: 'zcode'
+}
+
+export function apply(ctx: Context, config: ZcodePresetConfig & { role?: 'preset' | 'compaction' } = {}): void {
+  // The compaction realm's row mounts the same package with role 'compaction'
+  // (engine-only); the main preset row mounts sections + tools.
+  if (config.role === 'compaction') {
+    ctx.plugin(ZcodeCompactionEngine)
+    return
+  }
   const env: ZcodeEnv = { cwd: process.cwd() }
   // Official-shape todo + Agent rows (preset-scope shadows of the core rows).
   registerTodoTools(ctx)
   registerAgentTool(ctx)
   registerAskUserShadow(ctx)
+  // Official compaction prompt engine (replaces the compaction-basic row in
+  // the compaction realm; the row's isolate keeps it per-preset).
+  if (config.engine === 'zcode') {
+    ctx.plugin(ZcodeCompactionEngine)
+  }
   // Reminders: install the pre-step injector on every agent that joins this
   // preset's scope (scope-filtered agent/created); count turns via
   // tools/post-execute (a todo_write call resets the todo cadence).
@@ -245,3 +267,4 @@ export {
   buildWebSearchProviderDescription,
   EXIT_PLAN_MODE_MODEL_INSTRUCTIONS,
 } from './official/tool-descriptions.ts'
+export { ZcodeCompactionEngine } from './tools/compaction-zcode.ts'

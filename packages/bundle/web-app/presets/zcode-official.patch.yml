@@ -118,7 +118,9 @@
               toolResultPruner: true
             config:
               - id: compaction-basic
-                name: '@deepseek-ai/dsh-compaction-basic'
+                name: '@deepseek-ai/dsh-zcode-official'
+                config:
+                  role: compaction
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
               - id: tool-result-pruner

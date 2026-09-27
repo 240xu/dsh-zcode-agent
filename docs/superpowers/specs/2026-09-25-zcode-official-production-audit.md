@@ -54,7 +54,7 @@ D. 测试：todo schema/输出形状/优先级 sidecar 往返；agent 路由（�
 | 23 | ask_user_question shadow | ✅ 已落地：官方 schema（header≤12 必填、options 2-4、labels 唯一、无 Other、multiSelect、preview 仅单选、1-4 问、问题文本唯一）+ 官方描述逐字；映射 seam（id 生成、multiSelect 原生、preview→detail 降级）|
 | 24 | agent-instructions 行（AGENTS.md 注入） | ✅ 已修复遗漏：web-app patch + pilot profile 均已加行 |
 | 25 | bash shadow（timeout→timeoutMs 别名） | ❌ 回退：preset-scope 同名 shadow 经 scheduler 分发会自递归（scope 解析命中自身，OOM hang）。改为文档差异：DSH timeoutMs vs 官方 timeout，description 必填 vs 可选；语义 section 已含官方参数说明 |
-| 26 | compact prompt override | ⏸ 需 runtime：COMPACTION_INSTRUCTION 模块常量不可配；路径为 subclass BasicCompactionEngine 覆写 summarize()（架构师已核实 hook 文档），成本中，待后续 |
+| 26 | compact prompt override | ✅ 已落地：tools/compaction-zcode.ts——ZcodeCompactionEngine extends BasicCompactionEngine 覆写 summarize()，官方 buildCompactPrompt（9 段 <analysis>/<summary> + NO_TOOLS 前后缀 + 安全约束 verbatim 条款）替换核心 Markdown 指令；保留 DSH 前缀缓存复用（tools 透传）与 PRIOR-checkpoint 合并规则；durable <compacted-summary> 框架保留（无 replay consumer 解析该标签，机器契约是 compactCheckpointSource）。preset patch compaction 行经 role:'compaction' 分支挂载引擎（realm isolate 保持）。测试断言注入 instruction、tools 透传、purpose、官方锚点 |
 | 27 | cron/off-peak | ❌ 明确不做：DSH schedule 语义不同（session-local vs workspace 持久 cron），使用频率低 |
 | 28 | EnterPlanMode 工具化 | ❌ 需 runtime 模式切换 seam；exit_plan_mode 语义已等价 |
 
