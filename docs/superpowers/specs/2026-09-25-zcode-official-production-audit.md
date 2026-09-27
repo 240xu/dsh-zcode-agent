@@ -43,3 +43,19 @@ D. 测试：todo schema/输出形状/优先级 sidecar 往返；agent 路由（�
 ## 已记录、本阶段不做的差异
 
 #5 sparse reminder 节奏、#6 todo reminder（需 runtime turn-count 注入面）、#11 SendMessage 参数名、#14 计划工具化、#15 网络行为细节、#16 Bash timeout/description 参数、#19 compact 实现差异。
+
+
+## 第二轮复查（团队讨论后落地，2026-09-25）
+
+| # | 项 | 结论 |
+|---|---|---|
+| 21 | todo reminder（10/10 节奏 + 官方 body） | ✅ 已落地：tools/reminders.ts，经 agent/pre-step 注入 <system-reminder>（agent-instructions 模式），todo 工具行写入时重置计数 |
+| 22 | plan-mode reminder 节奏（full 每 5 次附件 / sparse 间隔） | ✅ 已落地：同一注入器，planMode 服务读活跃态，full 文本复用已移植的 plan-workflow |
+| 23 | ask_user_question shadow | ✅ 已落地：官方 schema（header≤12 必填、options 2-4、labels 唯一、无 Other、multiSelect、preview 仅单选、1-4 问、问题文本唯一）+ 官方描述逐字；映射 seam（id 生成、multiSelect 原生、preview→detail 降级）|
+| 24 | agent-instructions 行（AGENTS.md 注入） | ✅ 已修复遗漏：web-app patch + pilot profile 均已加行 |
+| 25 | bash shadow（timeout→timeoutMs 别名） | ❌ 回退：preset-scope 同名 shadow 经 scheduler 分发会自递归（scope 解析命中自身，OOM hang）。改为文档差异：DSH timeoutMs vs 官方 timeout，description 必填 vs 可选；语义 section 已含官方参数说明 |
+| 26 | compact prompt override | ⏸ 需 runtime：COMPACTION_INSTRUCTION 模块常量不可配；路径为 subclass BasicCompactionEngine 覆写 summarize()（架构师已核实 hook 文档），成本中，待后续 |
+| 27 | cron/off-peak | ❌ 明确不做：DSH schedule 语义不同（session-local vs workspace 持久 cron），使用频率低 |
+| 28 | EnterPlanMode 工具化 | ❌ 需 runtime 模式切换 seam；exit_plan_mode 语义已等价 |
+
+工具 shadow 关键机制结论：子代理经 toolFilter 解析到 preset scope 的 shadow 行（nearest-ancestor shadow），但同名 shadow 内部再按名字分发会命中自身——nested dispatch 必须绕过 scope 解析（run_code bridge 走 TOOL_RUNTIME_SCHEDULER 直调核心定义），bash 场景无独立核心名可用，故放弃 shadow。
