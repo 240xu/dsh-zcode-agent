@@ -25,6 +25,9 @@ var TODO_WRITE_DESCRIPTION = `Create and update a task list for the current sess
 - Send the full list each call; it replaces the previous one.
 - Keep one item \`in_progress\` at a time and mark it \`completed\` when done.`;
 var TODO_READ_DESCRIPTION = "Read the current session todo list";
+function todoPriorityOf(agent, content) {
+  return priorities.get(String(agent.session.id))?.get(content) ?? "medium";
+}
 async function readTodos(ctx, agent) {
   const snapshot = ctx.sessionProjections.snapshot(agent.session, ["todos"]);
   const stripped = snapshot.values["todos"] ?? [];
@@ -177,9 +180,146 @@ function registerTodoTools(ctx) {
   }));
 }
 
+// src/tools/ask-user-shadow.ts
+import { defineTool as defineTool2 } from "@deepseek-ai/dsh-tools";
+var ASK_USER_QUESTION_DESCRIPTION = [
+  "Use this tool only when you are blocked on a decision that is genuinely the user's to make: one you cannot resolve from the request, the code, or sensible defaults.",
+  "",
+  "Usage notes:",
+  '- Users will always be able to select "Other" to provide custom text input',
+  "- Use multiSelect: true to allow multiple answers to be selected for a question",
+  '- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label',
+  "",
+  'Plan mode note: To switch into plan mode, use EnterPlanMode (not this tool). Once in plan mode, use this tool to clarify requirements or choose between approaches BEFORE finalizing your plan. Do NOT use this tool to ask "Is my plan ready?", "Should I proceed?", or otherwise reference "the plan" in questions \u2014 the user cannot see the plan until you call ExitPlanMode for approval.',
+  "",
+  "Reserve this for decisions where the user's answer changes what you do next \u2014 not for choices with a conventional default or facts you can verify in the codebase yourself. In those cases pick the obvious option, mention it in your response, and proceed.",
+  "",
+  "Preview feature:",
+  "Use the optional `preview` field on options when presenting concrete artifacts that users need to visually compare:",
+  "- ASCII mockups of UI layouts or components",
+  "- Code snippets showing different implementations",
+  "- Diagram variations",
+  "- Configuration examples",
+  "",
+  "Preview content is rendered as markdown in a monospace box. Multi-line text with newlines is supported. When any option has a preview, the UI switches to a side-by-side layout with a vertical option list on the left and preview on the right. Do not use previews for simple preference questions where labels and descriptions suffice. Note: previews are only supported for single-select questions (not multiSelect)."
+].join("\n") + "\n";
+function validateOfficial(input) {
+  if (input.questions.length < 1 || input.questions.length > 4) {
+    throw new Error("questions must contain 1-4 questions");
+  }
+  const texts = /* @__PURE__ */ new Set();
+  for (const q of input.questions) {
+    if (texts.has(q.question)) throw new Error("Question texts must be unique");
+    texts.add(q.question);
+    if (q.header.length > 12) throw new Error(`header must be at most 12 characters: ${JSON.stringify(q.header)}`);
+    if (q.options.length < 2 || q.options.length > 4) {
+      throw new Error(`options must have 2-4 entries for question ${JSON.stringify(q.question.slice(0, 40))}`);
+    }
+    const labels = /* @__PURE__ */ new Set();
+    for (const option of q.options) {
+      const label = option.label.trim().toLowerCase();
+      if (label === "other") throw new Error("Do not include an Other option; clients provide it automatically");
+      if (labels.has(option.label)) throw new Error("Option labels must be unique within each question");
+      labels.add(option.label);
+      if (option.preview !== void 0 && q.multiSelect === true) {
+        throw new Error("previews are only supported for single-select questions (not multiSelect)");
+      }
+    }
+  }
+}
+function registerAskUserShadow(ctx) {
+  ctx.tools.register(defineTool2({
+    name: "ask_user_question",
+    description: ASK_USER_QUESTION_DESCRIPTION,
+    parameters: {
+      questions: {
+        type: "array",
+        required: true,
+        description: "Questions to ask the user before continuing.",
+        items: {
+          type: "object",
+          additionalProperties: true,
+          properties: {
+            question: {
+              type: "string",
+              required: true,
+              description: "The complete question to ask the user. Should be clear, specific, and end with a question mark. If multiSelect is true, phrase it accordingly."
+            },
+            header: {
+              type: "string",
+              required: true,
+              description: 'Very short label displayed as a chip/tag (max 12 chars). Examples: "Auth method", "Library", "Approach".'
+            },
+            options: {
+              type: "array",
+              required: true,
+              description: "The available choices for this question. Must have 2-4 options. Each option should be a distinct, mutually exclusive choice (unless multiSelect is enabled). There should be no 'Other' option, that will be provided automatically.",
+              items: {
+                type: "object",
+                additionalProperties: true,
+                properties: {
+                  label: { type: "string", required: true, description: "Short user-facing option label." },
+                  description: { type: "string", description: "Explanation of what this option means or what will happen if chosen." },
+                  preview: { type: "string", description: "Optional preview content rendered when this option is focused. Use for mockups, code snippets, or visual comparisons that help users compare options." }
+                }
+              }
+            },
+            multiSelect: {
+              type: "boolean",
+              description: "Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive."
+            }
+          }
+        }
+      }
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          questions: { type: "array", required: true },
+          answers: { type: "array", required: true }
+        }
+      },
+      render: (_args, value) => [{
+        type: "text",
+        text: JSON.stringify(value)
+      }]
+    },
+    async execute(args, exec) {
+      validateOfficial(args);
+      const result = await ctx.userQuestions.ask({
+        questions: args.questions.map((question) => ({
+          // Official has no caller id; mint one so the seam can echo answers.
+          id: crypto.randomUUID(),
+          question: question.question,
+          header: question.header,
+          options: question.options.map((option) => ({
+            label: option.label,
+            // Official `preview` degrades onto the seam's rendered `detail`
+            // field when description is absent (the seam renders detail but
+            // has no preview pane).
+            ...option.description !== void 0 ? { description: option.description } : {},
+            ...option.preview !== void 0 && option.description === void 0 ? { detail: option.preview } : {}
+          })),
+          ...question.multiSelect !== void 0 ? { multiSelect: question.multiSelect } : {}
+        })),
+        ...exec.agent !== void 0 ? { agent: exec.agent } : {},
+        signal: exec.signal
+      });
+      return {
+        questions: args.questions.map((question) => ({ question: question.question })),
+        answers: result.answers.map((answer) => ({
+          ...answer
+        }))
+      };
+    }
+  }));
+}
+
 // src/tools/agent.ts
 import { SessionId } from "@deepseek-ai/dsh-session";
-import { defineTool as defineTool2 } from "@deepseek-ai/dsh-tools";
+import { defineTool as defineTool3 } from "@deepseek-ai/dsh-tools";
 
 // src/official/env-info.ts
 var ENVIRONMENT_HEADING = "# Environment";
@@ -648,7 +788,7 @@ function registerAgentTool(ctx) {
   const cwd = process.cwd();
   const shapes = childShapes(cwd);
   const description = agentToolDescription();
-  ctx.tools.register(defineTool2({
+  ctx.tools.register(defineTool3({
     name: "agent",
     description,
     parameters: {
@@ -772,6 +912,143 @@ async function settleStart(start, signal) {
   }
 }
 
+// src/tools/reminders.ts
+import { createUserMessage } from "@deepseek-ai/dsh-llm";
+
+// src/official/plan-workflow.ts
+var EXPLORE_AGENT_TYPE2 = "Explore";
+var ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
+var EXIT_PLAN_MODE_TOOL_NAME = "ExitPlanMode";
+var planResearchAgentCount = 3;
+var RUNTIME_MODE_REMINDER_CONFIG = Object.freeze({
+  TURNS_BETWEEN_ATTACHMENTS: 5,
+  FULL_REMINDER_EVERY_N_ATTACHMENTS: 5
+});
+function buildPlanWorkflow() {
+  return `## Plan Workflow
+
+### Phase 1: Initial Understanding
+Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions. Critical: In this phase you should only use the ${EXPLORE_AGENT_TYPE2} subagent type.
+
+1. Focus on understanding the user's request and the code associated with their request. Actively search for existing functions, utilities, and patterns that can be reused \u2014 avoid proposing new code when suitable implementations already exist.
+
+2. **Launch up to ${planResearchAgentCount} ${EXPLORE_AGENT_TYPE2} agents IN PARALLEL** (single message, multiple tool calls) to efficiently explore the codebase.
+   - Use 1 agent when the task is isolated to known files, the user provided specific file paths, or you're making a small targeted change.
+   - Use multiple agents when: the scope is uncertain, multiple areas of the codebase are involved, or you need to understand existing patterns before planning.
+   - Quality over quantity - ${planResearchAgentCount} agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
+   - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigating testing patterns
+
+### Phase 2: Design
+Goal: Design an implementation approach.
+
+**Guidelines:**
+- Use the context gathered in Phase 1, including relevant files and code paths.
+- Account for the user's requirements and constraints.
+- Produce a concrete implementation plan that is detailed enough to execute.
+- Consider useful perspectives for the task type:
+  - New feature: simplicity vs performance vs maintainability
+  - Bug fix: root cause vs workaround vs prevention
+  - Refactoring: minimal change vs clean architecture
+
+### Phase 3: Review
+Goal: Review the plan(s) from Phase 2 and ensure alignment with the user's intentions.
+1. Read the critical files to deepen your understanding
+2. Ensure that the plans align with the user's original request
+3. Use ${ASK_USER_QUESTION_TOOL_NAME} to clarify any remaining questions with the user
+
+### Phase 4: Call ${EXIT_PLAN_MODE_TOOL_NAME}
+At the very end of your turn, once you have asked the user questions and are happy with your final plan - you should always call ${EXIT_PLAN_MODE_TOOL_NAME} to indicate to the user that you are done planning.
+This is critical - your turn should only end with either using the ${ASK_USER_QUESTION_TOOL_NAME} tool OR calling ${EXIT_PLAN_MODE_TOOL_NAME}. Do not stop unless it's for these 2 reasons
+
+**Important:** Use ${ASK_USER_QUESTION_TOOL_NAME} ONLY to clarify requirements or choose between approaches. Use ${EXIT_PLAN_MODE_TOOL_NAME} to request plan approval. Do NOT ask about plan approval in any other way - no text questions, no AskUserQuestion. Phrases like "Is this plan okay?", "Should I proceed?", "How does this plan look?", "Any changes before we start?", or similar MUST use ${EXIT_PLAN_MODE_TOOL_NAME}.
+
+NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications using the ${ASK_USER_QUESTION_TOOL_NAME} tool. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.`;
+}
+var PLAN_MODE_FULL_REMINDER = [
+  "Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits, run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received.",
+  buildPlanWorkflow()
+];
+var PLAN_MODE_SPARSE_REMINDER = [
+  `Plan mode still active (see full instructions earlier in conversation). Read-only. Follow 4-phase workflow. End turns with ${ASK_USER_QUESTION_TOOL_NAME} (for clarifications) or ${EXIT_PLAN_MODE_TOOL_NAME} (for plan approval). Never ask about plan approval via text or AskUserQuestion.`
+];
+function buildPlanModeFullReminderBody() {
+  return PLAN_MODE_FULL_REMINDER.join("\n");
+}
+function buildPlanModeSparseReminderBody() {
+  return PLAN_MODE_SPARSE_REMINDER.join("\n");
+}
+
+// src/tools/reminders.ts
+var TODO_REMINDER_CONFIG = Object.freeze({
+  TURNS_SINCE_WRITE: 10,
+  TURNS_BETWEEN_REMINDERS: 10
+});
+var PLAN_MODE_REMINDER_CONFIG = Object.freeze({
+  TURNS_BETWEEN_ATTACHMENTS: 5,
+  FULL_REMINDER_EVERY_N_ATTACHMENTS: 5
+});
+var states = /* @__PURE__ */ new Map();
+function stateFor(agent) {
+  const key = String(agent.session.id);
+  let s = states.get(key);
+  if (s === void 0) {
+    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0 };
+    states.set(key, s);
+  }
+  return s;
+}
+function resetCountersOnPlanMode(s) {
+  s.planReminderCount = 0;
+  s.turnsSincePlanReminder = 0;
+}
+function todoReminderBody(todos) {
+  const lines = [
+    "The TodoWrite tool hasn't been used recently. If you're working on tasks that would benefit from tracking progress, consider using the TodoWrite tool to track progress. Also consider cleaning up the todo list if it has become stale and no longer matches what you are working on. Only use it if it's relevant to the current work. This is just a gentle reminder - ignore if not applicable."
+  ];
+  if (todos.length > 0) {
+    const currentTodos = `[${todos.map((t) => `${JSON.stringify(t.content)}, ${t.status}, ${t.priority}`).join("\n")}]`;
+    lines.push("", "Here are the existing contents of your todo list:", "", currentTodos);
+  }
+  return lines.join("\n");
+}
+function installReminders(agentCtx, getTodos, isPlanMode) {
+  agentCtx.on("agent/pre-step", async ({ agent, step, signal }, next) => {
+    const decision = await next();
+    signal.throwIfAborted();
+    if (decision.kind === "reject") return decision;
+    if (step === 1 && decision.messages.length === 0) return decision;
+    const state = stateFor(agent);
+    const planMode = isPlanMode(agent);
+    if (!planMode) resetCountersOnPlanMode(state);
+    const reminders = [];
+    if (!planMode && state.turnsSinceTodoWrite >= TODO_REMINDER_CONFIG.TURNS_SINCE_WRITE && state.turnsSinceTodoReminder >= TODO_REMINDER_CONFIG.TURNS_BETWEEN_REMINDERS) {
+      const todos = await getTodos(agent) ?? [];
+      reminders.push(todoReminderBody(todos));
+      state.turnsSinceTodoReminder = 0;
+    }
+    if (planMode && state.turnsSincePlanReminder >= PLAN_MODE_REMINDER_CONFIG.TURNS_BETWEEN_ATTACHMENTS) {
+      state.planReminderCount++;
+      reminders.push(
+        state.planReminderCount % PLAN_MODE_REMINDER_CONFIG.FULL_REMINDER_EVERY_N_ATTACHMENTS === 1 ? buildPlanModeFullReminderBody() : buildPlanModeSparseReminderBody()
+      );
+      state.turnsSincePlanReminder = 0;
+    }
+    if (reminders.length === 0) return decision;
+    const injected = reminders.map((text) => createUserMessage({
+      content: [{ type: "text", text: `<system-reminder>
+${text}
+</system-reminder>` }],
+      source: { kind: "zcode-official:reminder", form: "reminder" }
+    }));
+    return { ...decision, messages: [...decision.messages, ...injected] };
+  });
+}
+function noteTodoWrite(agent) {
+  const s = stateFor(agent);
+  s.turnsSinceTodoWrite = 0;
+  s.turnsSinceTodoReminder = 0;
+}
+
 // src/official/identity.ts
 var SECURITY_NOTICE = "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.";
 function buildSecurityNotice() {
@@ -867,7 +1144,7 @@ function buildTodoWriteDescription() {
 function buildSkillDescription() {
   return 'Execute a skill within the main conversation\n\nWhen users ask you to perform tasks, check if any of the available skills match. Skills provide specialized capabilities and domain knowledge.\n\nWhen users reference a "slash command" or "/<something>", they are referring to a skill. Use this tool to invoke it.\n\nHow to invoke:\n- Set \\`skill\\` to the exact name of an available skill (no leading slash). For plugin-namespaced skills use the fully qualified \\`plugin:skill\\` form.\n- Set \\`args\\` to pass optional arguments.\n\nImportant:\n- Available skills are listed in system-reminder messages in the conversation\n- Only invoke a skill that appears in that list, or one the user explicitly typed as \\`/<name>\\` in their message. Never guess or invent a skill name from training data; otherwise do not call this tool\n- When a skill matches the user\'s request, this is a BLOCKING REQUIREMENT: invoke the relevant Skill tool BEFORE generating any other response about the task\n- NEVER mention a skill without actually calling this tool\n- Do not invoke a skill that is already running\n- Do not use this tool for built-in CLI commands (like /help, /clear, etc.)\n- If you see a <command-name> tag in the current conversation turn, the skill has ALREADY been loaded - follow the instructions directly instead of calling this tool again\n';
 }
-var ASK_USER_QUESTION_DESCRIPTION = "Use this tool only when you are blocked on a decision that is genuinely the user's to make: one you cannot resolve from the request, the code, or sensible defaults.\n\nUsage notes:\nOther\n- Use multiSelect: true to allow multiple answers to be selected for a question\n(Recommended)\n\nIs my plan ready?\nShould I proceed?\nthe plan\n\nReserve this for decisions where the user's answer changes what you do next \u2014 not for choices with a conventional default or facts you can verify in the codebase yourself. In those cases pick the obvious option, mention it in your response, and proceed.\n\nPreview feature:\nUse the optional `preview` field on options when presenting concrete artifacts that users need to visually compare:\n- ASCII mockups of UI layouts or components\n- Code snippets showing different implementations\n- Diagram variations\n- Configuration examples\n\nPreview content is rendered as markdown in a monospace box. Multi-line text with newlines is supported. When any option has a preview, the UI switches to a side-by-side layout with a vertical option list on the left and preview on the right. Do not use previews for simple preference questions where labels and descriptions suffice. Note: previews are only supported for single-select questions (not multiSelect).\n";
+var ASK_USER_QUESTION_DESCRIPTION2 = "Use this tool only when you are blocked on a decision that is genuinely the user's to make: one you cannot resolve from the request, the code, or sensible defaults.\n\nUsage notes:\nOther\n- Use multiSelect: true to allow multiple answers to be selected for a question\n(Recommended)\n\nIs my plan ready?\nShould I proceed?\nthe plan\n\nReserve this for decisions where the user's answer changes what you do next \u2014 not for choices with a conventional default or facts you can verify in the codebase yourself. In those cases pick the obvious option, mention it in your response, and proceed.\n\nPreview feature:\nUse the optional `preview` field on options when presenting concrete artifacts that users need to visually compare:\n- ASCII mockups of UI layouts or components\n- Code snippets showing different implementations\n- Diagram variations\n- Configuration examples\n\nPreview content is rendered as markdown in a monospace box. Multi-line text with newlines is supported. When any option has a preview, the UI switches to a side-by-side layout with a vertical option list on the left and preview on the right. Do not use previews for simple preference questions where labels and descriptions suffice. Note: previews are only supported for single-select questions (not multiSelect).\n";
 var EXIT_PLAN_MODE_MODEL_INSTRUCTIONS = [
   `Use this tool when you have finished writing your plan and are ready for user approval.
 
@@ -992,69 +1269,6 @@ function buildMemoryText(memoryRoot) {
   ].join("\n");
 }
 
-// src/official/plan-workflow.ts
-var EXPLORE_AGENT_TYPE2 = "Explore";
-var ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
-var EXIT_PLAN_MODE_TOOL_NAME = "ExitPlanMode";
-var planResearchAgentCount = 3;
-var RUNTIME_MODE_REMINDER_CONFIG = Object.freeze({
-  TURNS_BETWEEN_ATTACHMENTS: 5,
-  FULL_REMINDER_EVERY_N_ATTACHMENTS: 5
-});
-function buildPlanWorkflow() {
-  return `## Plan Workflow
-
-### Phase 1: Initial Understanding
-Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions. Critical: In this phase you should only use the ${EXPLORE_AGENT_TYPE2} subagent type.
-
-1. Focus on understanding the user's request and the code associated with their request. Actively search for existing functions, utilities, and patterns that can be reused \u2014 avoid proposing new code when suitable implementations already exist.
-
-2. **Launch up to ${planResearchAgentCount} ${EXPLORE_AGENT_TYPE2} agents IN PARALLEL** (single message, multiple tool calls) to efficiently explore the codebase.
-   - Use 1 agent when the task is isolated to known files, the user provided specific file paths, or you're making a small targeted change.
-   - Use multiple agents when: the scope is uncertain, multiple areas of the codebase are involved, or you need to understand existing patterns before planning.
-   - Quality over quantity - ${planResearchAgentCount} agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
-   - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigating testing patterns
-
-### Phase 2: Design
-Goal: Design an implementation approach.
-
-**Guidelines:**
-- Use the context gathered in Phase 1, including relevant files and code paths.
-- Account for the user's requirements and constraints.
-- Produce a concrete implementation plan that is detailed enough to execute.
-- Consider useful perspectives for the task type:
-  - New feature: simplicity vs performance vs maintainability
-  - Bug fix: root cause vs workaround vs prevention
-  - Refactoring: minimal change vs clean architecture
-
-### Phase 3: Review
-Goal: Review the plan(s) from Phase 2 and ensure alignment with the user's intentions.
-1. Read the critical files to deepen your understanding
-2. Ensure that the plans align with the user's original request
-3. Use ${ASK_USER_QUESTION_TOOL_NAME} to clarify any remaining questions with the user
-
-### Phase 4: Call ${EXIT_PLAN_MODE_TOOL_NAME}
-At the very end of your turn, once you have asked the user questions and are happy with your final plan - you should always call ${EXIT_PLAN_MODE_TOOL_NAME} to indicate to the user that you are done planning.
-This is critical - your turn should only end with either using the ${ASK_USER_QUESTION_TOOL_NAME} tool OR calling ${EXIT_PLAN_MODE_TOOL_NAME}. Do not stop unless it's for these 2 reasons
-
-**Important:** Use ${ASK_USER_QUESTION_TOOL_NAME} ONLY to clarify requirements or choose between approaches. Use ${EXIT_PLAN_MODE_TOOL_NAME} to request plan approval. Do NOT ask about plan approval in any other way - no text questions, no AskUserQuestion. Phrases like "Is this plan okay?", "Should I proceed?", "How does this plan look?", "Any changes before we start?", or similar MUST use ${EXIT_PLAN_MODE_TOOL_NAME}.
-
-NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications using the ${ASK_USER_QUESTION_TOOL_NAME} tool. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.`;
-}
-var PLAN_MODE_FULL_REMINDER = [
-  "Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits, run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received.",
-  buildPlanWorkflow()
-];
-var PLAN_MODE_SPARSE_REMINDER = [
-  `Plan mode still active (see full instructions earlier in conversation). Read-only. Follow 4-phase workflow. End turns with ${ASK_USER_QUESTION_TOOL_NAME} (for clarifications) or ${EXIT_PLAN_MODE_TOOL_NAME} (for plan approval). Never ask about plan approval via text or AskUserQuestion.`
-];
-function buildPlanModeFullReminderBody() {
-  return PLAN_MODE_FULL_REMINDER.join("\n");
-}
-function buildPlanModeSparseReminderBody() {
-  return PLAN_MODE_SPARSE_REMINDER.join("\n");
-}
-
 // src/index.ts
 var CLI_PREFIX_PROMPT = "You are ZCode, an interactive coding agent";
 var ZCODE_NAME = {
@@ -1107,7 +1321,7 @@ function buildSections(env) {
     agent: buildAgentProviderDescription(profileRoster ?? ""),
     task: buildTaskDescription(buildAgentProviderDescription(profileRoster ?? "")),
     goal_read: "Reads the current session goal state. The goal text is authoritative for the long-running objective; a later GoalRead result or runtime goal event updates it. Do not mark the goal complete unless real evidence shows the objective has been achieved. A completed plan, todo list, checklist, or planning phase is not completion evidence unless the objective was only to produce that artifact.",
-    ask_user_question: ASK_USER_QUESTION_DESCRIPTION
+    ask_user_question: ASK_USER_QUESTION_DESCRIPTION2
   };
   const blocks = [
     "# ZCode tool semantics",
@@ -1146,11 +1360,37 @@ Today's date is ${localIsoDate()}.` }
   }
   return sections;
 }
-var inject = ["systemPrompt", "tools", "sessionProjections", "subagents"];
+var inject = ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions"];
 function apply(ctx) {
   const env = { cwd: process.cwd() };
   registerTodoTools(ctx);
   registerAgentTool(ctx);
+  registerAskUserShadow(ctx);
+  ctx.on("agent/created", async ({ agent }) => {
+    installReminders(
+      agent.ctx,
+      (agentArg) => {
+        const snapshot = ctx.sessionProjections.snapshot(agentArg.session, ["todos"]);
+        const stripped = snapshot.values["todos"] ?? [];
+        return Promise.resolve(stripped.map((item) => ({
+          content: item.content,
+          status: item.status,
+          priority: todoPriorityOf(agentArg, item.content)
+        })));
+      },
+      (agentArg) => {
+        try {
+          return ctx.planMode.get(agentArg).active;
+        } catch {
+          return false;
+        }
+      }
+    );
+  });
+  ctx.on("tools/post-execute", async (exec, _result, next) => {
+    if (exec.name === "todo_write" && exec.agent !== void 0) noteTodoWrite(exec.agent);
+    return next();
+  });
   ctx.effect(function* () {
     for (const section of buildSections(env)) {
       yield ctx.systemPrompt.section({

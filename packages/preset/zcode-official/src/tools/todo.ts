@@ -81,6 +81,11 @@ export const TODO_WRITE_DESCRIPTION = `Create and update a task list for the cur
 /** Official TodoRead provider description (handlers/todo.ts, verbatim). */
 export const TODO_READ_DESCRIPTION = 'Read the current session todo list'
 
+/** Sidecar priority lookup for reminder rendering (defaults to 'medium'). */
+export function todoPriorityOf(agent: Agent, content: string): 'high' | 'medium' | 'low' {
+  return priorities.get(String(agent.session.id))?.get(content) ?? 'medium'
+}
+
 async function readTodos(ctx: Context, agent: Agent): Promise<OfficialTodoItem[]> {
   const snapshot = ctx.sessionProjections.snapshot(agent.session, ['todos'])
   const stripped = (snapshot.values['todos'] ?? []) as Array<{ content: string; status: string }>

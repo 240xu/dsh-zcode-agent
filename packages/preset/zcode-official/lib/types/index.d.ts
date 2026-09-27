@@ -38,7 +38,7 @@ export interface ZcodeEnv {
 export declare function buildSections(env: ZcodeEnv): ZcodeSection[];
 /** Tool + prompt dependencies: sections ride systemPrompt; the official todo
  * and Agent rows shadow the core rows inside the preset scope. */
-export declare const inject: readonly ["systemPrompt", "tools", "sessionProjections", "subagents"];
+export declare const inject: readonly ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions"];
 export declare function apply(ctx: Context): void;
 export { collectEnvInfo, memoryRootFor, localIsoDate };
 export { EXPLORE_AGENT_TYPE, GENERAL_PURPOSE_AGENT_TYPE, buildExploreAgentPrompt, buildGeneralPurposeSystemPrompt, buildSubagentCommonNotes, buildSubagentEnvironmentContext, EXPLORE_AGENT_ALLOWED_TOOLS, formatExploreAllowedToolsForAgentDescription, builtInAgentProfiles, } from './official/subagents.ts';

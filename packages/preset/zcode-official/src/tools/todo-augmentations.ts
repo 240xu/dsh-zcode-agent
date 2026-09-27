@@ -35,3 +35,15 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
 }
 
 export {}
+
+/** Reminder user-message source, following the agent-instructions pattern. */
+interface ZcodeReminderSource {
+  kind: 'zcode-official:reminder'
+  form: 'reminder'
+}
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'zcode-official:reminder': ZcodeReminderSource
+  }
+}

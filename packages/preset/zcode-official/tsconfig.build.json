@@ -23,6 +23,9 @@
       ],
       "@deepseek-ai/cosmokit": [
         "/data/data/com.termux/files/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cosmokit/lib/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-plan-mode": [
+        "/data/data/com.termux/files/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-plan-mode/lib/types/index.d.ts"
       ]
     },
     "allowImportingTsExtensions": true,

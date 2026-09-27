@@ -22,8 +22,11 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-system-prompt'
-import { registerTodoTools } from './tools/todo.ts'
+import type {} from '@deepseek-ai/dsh-plan-mode'
+import { registerTodoTools, todoPriorityOf } from './tools/todo.ts'
+import { registerAskUserShadow } from './tools/ask-user-shadow.ts'
 import { registerAgentTool } from './tools/agent.ts'
+import { installReminders, noteTodoWrite } from './tools/reminders.ts'
 import { buildSecurityNotice, buildHarnessBlock } from './official/identity.ts'
 
 /** Service dependencies: the system prompt section registry. */
@@ -167,13 +170,42 @@ export function buildSections(env: ZcodeEnv): ZcodeSection[] {
 
 /** Tool + prompt dependencies: sections ride systemPrompt; the official todo
  * and Agent rows shadow the core rows inside the preset scope. */
-export const inject = ['systemPrompt', 'tools', 'sessionProjections', 'subagents'] as const
+export const inject = ['systemPrompt', 'tools', 'sessionProjections', 'subagents', 'userQuestions'] as const
 
 export function apply(ctx: Context): void {
   const env: ZcodeEnv = { cwd: process.cwd() }
   // Official-shape todo + Agent rows (preset-scope shadows of the core rows).
   registerTodoTools(ctx)
   registerAgentTool(ctx)
+  registerAskUserShadow(ctx)
+  // Reminders: install the pre-step injector on every agent that joins this
+  // preset's scope (scope-filtered agent/created); count turns via
+  // tools/post-execute (a todo_write call resets the todo cadence).
+  ctx.on('agent/created', async ({ agent }) => {
+    installReminders(
+      agent.ctx,
+      agentArg => {
+        const snapshot = ctx.sessionProjections.snapshot(agentArg.session, ['todos'])
+        const stripped = (snapshot.values['todos'] ?? []) as Array<{ content: string; status: string }>
+        return Promise.resolve(stripped.map(item => ({
+          content: item.content,
+          status: item.status,
+          priority: todoPriorityOf(agentArg, item.content),
+        })))
+      },
+      agentArg => {
+        try {
+          return ctx.planMode.get(agentArg).active
+        } catch {
+          return false
+        }
+      },
+    )
+  })
+  ctx.on('tools/post-execute', async (exec, _result, next) => {
+    if (exec.name === 'todo_write' && exec.agent !== undefined) noteTodoWrite(exec.agent)
+    return next()
+  })
   ctx.effect(function* () {
     for (const section of buildSections(env)) {
       yield ctx.systemPrompt.section({
