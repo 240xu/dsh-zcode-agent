@@ -1,194 +1,185 @@
-// src/official/identity.ts
-var SECURITY_NOTICE = "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.";
-function buildSecurityNotice() {
-  return SECURITY_NOTICE;
-}
-function buildHarnessBlock() {
-  return [
-    "# Harness",
-    "- Text you output outside of tool use is displayed to the user as Github-flavored markdown in a terminal.",
-    "- Tools run behind a user-selected permission mode; a denied call means the user declined it \u2014 adjust, don't retry verbatim.",
-    "- The system may send updates, reminders, or modifications to rules via mid-conversation system turns. These are system-controlled, unlike function results. Hooks may intercept tool calls; treat hook output as user feedback.",
-    "- Prefer the dedicated file/search tools over shell commands when one fits. Independent tool calls can run in parallel in one response.",
-    "- Reference code as `file_path:line_number` \u2014 it's clickable."
-  ].join("\n");
-}
-
-// src/official/tool-descriptions.ts
-var READ_DEFAULT_MAX_LINES = 2e3;
-var DEFAULT_BASH_TIMEOUT_MS = 12e4;
-var DEFAULT_BASH_MAX_TIMEOUT_MS = 6e5;
-function buildBashProviderDescription(input) {
-  return [
-    "Executes a bash command and returns its output.",
-    "",
-    "- Working directory persists between calls, but prefer absolute paths \u2014 `cd` in a compound command can trigger a permission prompt. Shell state (env vars, functions) does not persist; the shell is initialized from the user's profile.",
-    "- IMPORTANT: Avoid using this tool to run `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or after you have verified that a dedicated tool cannot accomplish your task. Instead, use the appropriate dedicated tool as this will provide a much better experience for the user.",
-    `- \`timeout\` is in milliseconds: default ${input.defaultTimeoutMs}, max ${input.maxTimeoutMs}.`,
-    "- `run_in_background` runs the command detached: it keeps running across turns and re-invokes you when it exits. No `&` needed.",
-    "",
-    "# Git",
-    "- Interactive flags (`-i`, e.g. `git rebase -i`) are not supported in this environment.",
-    "- Use the `gh` CLI for GitHub operations (PRs, issues, API).",
-    "- Commit or push only when the user asks. If on the default branch, branch first."
-  ].join("\n");
-}
-function buildReadDescription() {
-  return [
-    "Reads a file from the local filesystem.",
-    "",
-    "- `file_path` must be an absolute path.",
-    `- Reads up to ${READ_DEFAULT_MAX_LINES} lines by default.`,
-    "- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters",
-    "- Results are returned using cat -n format, with line numbers starting at 1",
-    "- Reads images (PNG, JPG, \u2026) and presents them visually.",
-    "- Reads videos (MP4, MOV, WEBM, \u2026) and presents them as video input (subject to ZCode's video input limit).",
-    "- Reading a directory, a missing file, or an empty file returns an error or system reminder rather than content.",
-    "- Do NOT re-read a file you just edited to verify \u2014 Edit/Write would have errored if the change failed, and the harness tracks file state for you."
-  ].join("\n");
-}
-function buildWriteDescription() {
-  return "Writes a file to the local filesystem, overwriting if one exists.\n\nWhen to use: creating a new file, or fully replacing one you've already Read. Overwriting an existing file you haven't Read will fail. For partial changes, use Edit instead.";
-}
-function buildEditDescription() {
-  return "Performs exact string replacement in a file.\n\n- You must Read the file in this conversation before editing, or the call will fail.\n- `old_string` must match the file exactly, including indentation, and be unique \u2014 the edit fails otherwise. Strip the Read line prefix (line number + tab) before matching.\n- `replace_all: true` replaces every occurrence instead.";
-}
-function buildGlobDescription() {
-  return 'Fast file pattern matching. Supports glob patterns like "**/*.js" or "src/**/*.ts". Returns matching file paths sorted by modification time.';
-}
-function buildGrepDescription() {
-  return 'Content search built on ripgrep. Prefer this over `grep`/`rg` via Bash \u2014 results integrate with the permission UI and file links.\n\n- Full regex syntax (e.g. "log.*Error", "function\\s+\\w+"). Ripgrep, not grep \u2014 escape literal braces (`interface\\{\\}`).\n- Filter with `glob` (e.g. "**/*.tsx") or `type` (e.g. "js", "py", "rust").\n- `output_mode`: "content" (matching lines), "files_with_matches" (paths only, default), or "count".\n- `multiline: true` for patterns that span lines.';
-}
-function buildWebFetchDescription() {
-  return "Fetches a URL, converts the page to markdown, and answers `prompt` against it using a small fast model.\n\n- Fails on authenticated/private URLs \u2014 use an authenticated MCP tool or `gh` for those instead.\n- HTTP is upgraded to HTTPS. Cross-host redirects are returned to you rather than followed; call again with the redirect URL.\n- Responses are cached for 15 minutes per URL.";
-}
-var WEBSEARCH_MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December"
-];
-function buildWebSearchProviderDescription(now = /* @__PURE__ */ new Date()) {
-  const currentMonth = `${WEBSEARCH_MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
-  return [
-    "Search the web. Returns result blocks with titles and URLs. US-only.",
-    "",
-    `- The current month is ${currentMonth} \u2014 use this when searching for recent information.`,
-    "- `allowed_domains` / `blocked_domains` filter results.",
-    "Sources:"
-  ].join("\n");
-}
-var TODO_READ_DESCRIPTION = "Read the current session todo list";
-function buildTodoWriteDescription() {
-  return 'Create and update a task list for the current session. The list is rendered to the user as your working plan.\n\n- Each todo has \\`content\\`, \\`status\\` ("pending" | "in_progress" | "completed"), and \\`priority\\` ("high" | "medium" | "low").\n- Send the full list each call; it replaces the previous one.\n- Keep one item \\`in_progress\\` at a time and mark it \\`completed\\` when done.';
-}
-function buildSkillDescription() {
-  return 'Execute a skill within the main conversation\n\nWhen users ask you to perform tasks, check if any of the available skills match. Skills provide specialized capabilities and domain knowledge.\n\nWhen users reference a "slash command" or "/<something>", they are referring to a skill. Use this tool to invoke it.\n\nHow to invoke:\n- Set \\`skill\\` to the exact name of an available skill (no leading slash). For plugin-namespaced skills use the fully qualified \\`plugin:skill\\` form.\n- Set \\`args\\` to pass optional arguments.\n\nImportant:\n- Available skills are listed in system-reminder messages in the conversation\n- Only invoke a skill that appears in that list, or one the user explicitly typed as \\`/<name>\\` in their message. Never guess or invent a skill name from training data; otherwise do not call this tool\n- When a skill matches the user\'s request, this is a BLOCKING REQUIREMENT: invoke the relevant Skill tool BEFORE generating any other response about the task\n- NEVER mention a skill without actually calling this tool\n- Do not invoke a skill that is already running\n- Do not use this tool for built-in CLI commands (like /help, /clear, etc.)\n- If you see a <command-name> tag in the current conversation turn, the skill has ALREADY been loaded - follow the instructions directly instead of calling this tool again\n';
-}
-var ASK_USER_QUESTION_DESCRIPTION = "Use this tool only when you are blocked on a decision that is genuinely the user's to make: one you cannot resolve from the request, the code, or sensible defaults.\n\nUsage notes:\nOther\n- Use multiSelect: true to allow multiple answers to be selected for a question\n(Recommended)\n\nIs my plan ready?\nShould I proceed?\nthe plan\n\nReserve this for decisions where the user's answer changes what you do next \u2014 not for choices with a conventional default or facts you can verify in the codebase yourself. In those cases pick the obvious option, mention it in your response, and proceed.\n\nPreview feature:\nUse the optional `preview` field on options when presenting concrete artifacts that users need to visually compare:\n- ASCII mockups of UI layouts or components\n- Code snippets showing different implementations\n- Diagram variations\n- Configuration examples\n\nPreview content is rendered as markdown in a monospace box. Multi-line text with newlines is supported. When any option has a preview, the UI switches to a side-by-side layout with a vertical option list on the left and preview on the right. Do not use previews for simple preference questions where labels and descriptions suffice. Note: previews are only supported for single-select questions (not multiSelect).\n";
-var EXIT_PLAN_MODE_MODEL_INSTRUCTIONS = [
-  `Use this tool when you have finished writing your plan and are ready for user approval.
-
-## How This Tool Works
-- You should have already explored the codebase and finalized the plan you want the user to review
-- Pass the complete plan in the plan field; the user will review that content before approving implementation
-- This tool simply signals that you're done planning and ready for the user to review and approve
-- The user will see the contents of the plan parameter when they review it
-
-## When to Use This Tool
-IMPORTANT: Only use this tool when the task requires planning the implementation steps of a task that requires writing code. For research tasks where you're gathering information, searching files, reading files or in general trying to understand the codebase - do NOT use this tool.
-
-## Before Using This Tool
-Ensure your plan is complete and unambiguous:
-- If you have unresolved questions about requirements or approach, use AskUserQuestion before finalizing your plan
-- Once your plan is finalized, use THIS tool to request approval
-
-**Important:** Do NOT use AskUserQuestion to ask "Is this plan okay?" or "Should I proceed?" - that's exactly what THIS tool does. ExitPlanMode inherently requests user approval of your plan.`
-];
-function buildAgentProviderDescription(agentList) {
-  return [
-    "Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.",
-    "",
-    agentList,
-    "",
-    "When using the Agent tool, specify a subagent_type parameter to select which agent type to use. If omitted, the general-purpose agent is used.",
-    "",
-    "## When to use",
-    "",
-    "Reach for this when the task matches an available agent type, when you have independent work to run in parallel, or when answering would mean reading across several files \u2014 delegate it and you keep the conclusion, not the file dumps. For a single-fact lookup where you already know the file, symbol, or value, search directly. Once you've delegated a search, don't also run it yourself \u2014 wait for the result.",
-    "",
-    "- The agent's final message is returned to you as the tool result; it is not shown to the user \u2014 relay what matters.",
-    "- A new Agent call starts fresh, so the prompt must be self-contained.",
-    "- `run_in_background: true` runs the agent asynchronously; you'll be notified when it completes.",
-    "- When you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently."
-  ].join("\n");
-}
-function buildTaskDescription(agentDescription) {
-  return [
-    "Claude Code-compatible alias for the Agent tool. Use this when plugin instructions ask for the Task tool.",
-    "",
-    agentDescription
-  ].join("\n");
-}
-
-// src/official/dynamic-sections.ts
-var COMMUNICATION_PROMPTS = {
-  default: "Write code that reads like the surrounding code: match its comment density, naming, and idiom.",
-  additional: {
-    beforeDefault: [
-      "# Communicating with the user",
-      "",
-      "Your text output is what the user reads; they usually can't see your thinking or the raw tool results. Write it for a teammate who stepped away and is catching up, not for a log file: they don't know the codenames or shorthand you created along the way, and they didn't watch your process unfold. Before your first tool call, say in a sentence what you're about to do; while working, give brief updates when you find something load-bearing or change direction.",
-      "",
-      "Text you write between tool calls may not be shown to the user. Everything the user needs from this turn \u2014 answers, summaries, findings, conclusions, deliverables \u2014 must be in the final text message of your turn, with no tool calls after it. Keep text between tool calls to brief status notes. If something important appeared only mid-turn or in your thinking, restate it in that final message.",
-      "",
-      'Lead with the outcome. Your first sentence after finishing should answer "what happened" or "what did you find" \u2014 the thing the user would ask for if they said "just give me the TLDR." Supporting detail and reasoning come after, for readers who want them.',
-      "",
-      "Being readable and being concise are different things, and readable matters more. If the user has to reread your summary or ask you to explain, any time saved by brevity is gone. The way to keep output short is to be selective about what you include (drop details that don't change what the reader would do next), not to compress the writing into fragments, abbreviations, arrow chains like `A \u2192 B \u2192 fails`, or jargon. What you do include, write in complete sentences with the technical terms spelled out. Don't make the reader cross-reference labels or numbering you invented earlier; say what you mean in place.",
-      "",
-      "Match the response to the question: a simple question gets a direct answer in prose, not headers and sections. Use tables only for short enumerable facts, with explanations in the surrounding prose rather than the cells. Calibrate to the user \u2014 a bit tighter for an expert, more explanatory for someone newer."
-    ].join("\n"),
-    afterDefault: "Only write a code comment to state a constraint the code itself can't show \u2014 never to say where it came from, what the next line does, or why your change is correct; that's you talking to the reviewer, not the next reader, and it's noise the moment the PR merges."
+// src/tools/todo.ts
+import { defineTool } from "@deepseek-ai/dsh-tools";
+var STATUSES = ["pending", "in_progress", "completed"];
+var PRIORITIES = ["high", "medium", "low"];
+var priorities = /* @__PURE__ */ new Map();
+function sidecarFor(agentKey) {
+  let m = priorities.get(agentKey);
+  if (m === void 0) {
+    m = /* @__PURE__ */ new Map();
+    priorities.set(agentKey, m);
   }
-};
-var CONTEXT_MANAGEMENT_PROMPTS = {
-  default: [
-    "# Context management",
-    "When the conversation grows long, some or all of the current context is summarized; the summary, along with any remaining unsummarized context, is provided in the next context window so work can continue \u2014 you don't need to wrap up early or hand off mid-task."
-  ].join("\n"),
-  additional: [
-    "When you have enough information to act, act. Do not re-derive facts already established in the conversation, re-litigate a decision the user has already made, or narrate options you will not pursue. If you are weighing a choice, give a recommendation, not an exhaustive survey",
-    "",
-    "You are operating autonomously. The user is not watching in real time and cannot answer questions mid-task, so asking 'Want me to\u2026?' or 'Shall I\u2026?' will block the work. For reversible actions that follow from the original request, proceed without asking. Stop only for destructive actions or genuine scope changes the user must decide. Offering follow-ups after the task is done is fine; asking permission before doing the work is not.",
-    "",
-    "Exception: when the user is describing a problem, asking a question, or thinking out loud rather than requesting a change, the deliverable is your assessment. Report your findings and stop. Don't apply a fix until they ask for one.",
-    "",
-    "Before ending your turn, check your last paragraph. If it is a plan, an analysis, a question, a list of next steps, or a promise about work you have not done ('I'll\u2026', 'let me know when\u2026'), do that work now with tool calls. That includes retrying after errors and gathering missing information yourself. Do not stop because the context or session is long. End your turn only when the task is complete or you are blocked on input only the user can provide.",
-    "",
-    "Before running a command that changes system state \u2014 restarts, deletes, config edits \u2014 check that the evidence actually supports that specific action. A signal that pattern-matches to a known failure may have a different cause."
-  ].join("\n")
-};
-function buildDynamicBehaviorText() {
-  return [
-    COMMUNICATION_PROMPTS.additional.beforeDefault,
-    "",
-    COMMUNICATION_PROMPTS.default,
-    COMMUNICATION_PROMPTS.additional.afterDefault,
-    "",
-    "For actions that are hard to reverse or outward-facing, confirm first unless durably authorized or explicitly told to proceed without asking; approval in one context doesn't extend to the next. Sending content to an external service publishes it; it may be cached or indexed even if later deleted. Before deleting or overwriting, look at the target \u2014 if what you find contradicts how it was described, or you didn't create it, surface that instead of proceeding. Report outcomes faithfully: if tests fail, say so with the output; if a step was skipped, say that; when something is done and verified, state it plainly without hedging."
-  ].join("\n");
+  return m;
 }
-function buildContextManagementText() {
-  return [CONTEXT_MANAGEMENT_PROMPTS.default, "", CONTEXT_MANAGEMENT_PROMPTS.additional].join("\n");
+function summarize(todos) {
+  return {
+    total: todos.length,
+    pending: todos.filter((t) => t.status === "pending").length,
+    inProgress: todos.filter((t) => t.status === "in_progress").length,
+    completed: todos.filter((t) => t.status === "completed").length
+  };
 }
+var TODO_WRITE_DESCRIPTION = `Create and update a task list for the current session. The list is rendered to the user as your working plan.
+
+- Each todo has \`content\`, \`status\` ("pending" | "in_progress" | "completed"), and \`priority\` ("high" | "medium" | "low").
+- Send the full list each call; it replaces the previous one.
+- Keep one item \`in_progress\` at a time and mark it \`completed\` when done.`;
+var TODO_READ_DESCRIPTION = "Read the current session todo list";
+async function readTodos(ctx, agent) {
+  const snapshot = ctx.sessionProjections.snapshot(agent.session, ["todos"]);
+  const stripped = snapshot.values["todos"] ?? [];
+  const sidecar = priorities.get(String(agent.session.id));
+  return stripped.map((item) => ({
+    content: item.content,
+    status: STATUSES.includes(item.status) ? item.status : "pending",
+    priority: sidecar?.get(item.content) ?? "medium"
+  }));
+}
+function registerTodoTools(ctx) {
+  ctx.tools.register(defineTool({
+    name: "todo_write",
+    description: TODO_WRITE_DESCRIPTION,
+    parameters: {
+      todos: {
+        type: "array",
+        required: true,
+        description: "The COMPLETE task list, replacing any previous list.",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            content: { type: "string", required: true, description: "Brief description of the task" },
+            status: { type: "string", required: true, enum: [...STATUSES], description: "Current status of the task" },
+            priority: { type: "string", required: true, enum: [...PRIORITIES], description: "Priority level of the task" }
+          }
+        }
+      }
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          oldTodos: {
+            type: "array",
+            required: true,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                content: { type: "string", required: true },
+                status: { type: "string", required: true },
+                priority: { type: "string", required: true }
+              }
+            }
+          },
+          todos: {
+            type: "array",
+            required: true,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                content: { type: "string", required: true },
+                status: { type: "string", required: true },
+                priority: { type: "string", required: true }
+              }
+            }
+          },
+          summary: {
+            type: "object",
+            additionalProperties: false,
+            required: true,
+            properties: {
+              total: { type: "integer", required: true },
+              pending: { type: "integer", required: true },
+              inProgress: { type: "integer", required: true },
+              completed: { type: "integer", required: true }
+            }
+          }
+        }
+      },
+      render: (_args, value) => [{
+        type: "text",
+        text: `Updated todo list: ${value.summary.pending} pending, ${value.summary.inProgress} in progress, ${value.summary.completed} completed.`
+      }]
+    },
+    async execute(args, exec) {
+      if (!exec.agent) throw new Error("todo_write requires an owning agent session");
+      const agentKey = String(exec.agent.session.id);
+      const seen = /* @__PURE__ */ new Set();
+      let active = 0;
+      const todos = [];
+      for (const item of args.todos) {
+        if (!STATUSES.includes(item.status)) {
+          throw new Error(`invalid status: ${JSON.stringify(item.status)}`);
+        }
+        if (!PRIORITIES.includes(item.priority)) {
+          throw new Error(`invalid priority: ${JSON.stringify(item.priority)}`);
+        }
+        if (seen.has(item.content)) {
+          throw new Error(`invalid todos: duplicate content ${JSON.stringify(item.content)}`);
+        }
+        seen.add(item.content);
+        if (item.status === "in_progress") active++;
+        todos.push({
+          content: item.content,
+          status: item.status,
+          priority: item.priority
+        });
+      }
+      if (active > 1) throw new Error(`invalid todos: at most one task may be in_progress (got ${active})`);
+      const oldTodos = await readTodos(ctx, exec.agent);
+      exec.agent.session.append("todo/write", {
+        todos: todos.map((todo) => ({ content: todo.content, status: todo.status }))
+      });
+      const sidecar = sidecarFor(agentKey);
+      sidecar.clear();
+      for (const todo of todos) sidecar.set(todo.content, todo.priority);
+      return { oldTodos, todos, summary: summarize(todos) };
+    },
+    presentCall: (args) => ({ card: "generic", title: "Update todo list", kind: "other", rawInput: args.todos })
+  }));
+  ctx.tools.register(defineTool({
+    name: "todo_read",
+    description: TODO_READ_DESCRIPTION,
+    parameters: {},
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          todos: {
+            type: "array",
+            required: true,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                content: { type: "string", required: true },
+                status: { type: "string", required: true },
+                priority: { type: "string", required: true }
+              }
+            }
+          }
+        }
+      },
+      render: (_args, value) => [{
+        type: "text",
+        text: value.todos.length === 0 ? "The session todo list is empty." : `[${value.todos.map((t) => `${JSON.stringify(t.content)}, ${t.status}, ${t.priority}`).join("\n")}]`
+      }]
+    },
+    async execute(_args, exec) {
+      if (!exec.agent) throw new Error("todo_read requires an owning agent session");
+      return { todos: await readTodos(ctx, exec.agent) };
+    },
+    presentCall: () => ({ card: "generic", title: "Read todo list", kind: "other", rawInput: {} })
+  }));
+}
+
+// src/tools/agent.ts
+import { SessionId } from "@deepseek-ai/dsh-session";
+import { defineTool as defineTool2 } from "@deepseek-ai/dsh-tools";
 
 // src/official/env-info.ts
 var ENVIRONMENT_HEADING = "# Environment";
@@ -266,34 +257,6 @@ function buildEnvText(info, model) {
 }
 function buildGitSystemContextText(info) {
   return buildGitSystemContextContent(info);
-}
-
-// src/official/memory.ts
-function buildMemoryText(memoryRoot) {
-  return [
-    "# Memory",
-    "",
-    `You have a persistent file-based memory at \`${memoryRoot}/\`. This directory already exists \u2014 write to it directly with the Write tool (do not run mkdir or check for its existence). Each memory is one file holding one fact, with frontmatter:`,
-    "",
-    "```markdown",
-    "---",
-    "name: <short-kebab-case-slug>",
-    "description: <one-line summary \u2014 used to decide relevance during recall>",
-    "metadata:",
-    "  type: user | feedback | project | reference",
-    "---",
-    "",
-    "<the fact; for feedback/project, follow with **Why:** and **How to apply:** lines. Link related memories with [[their-name]].>",
-    "```",
-    "",
-    "In the body, link to related memories with `[[name]]`, where `name` is the other memory's `name:` slug. Link liberally \u2014 a `[[name]]` that doesn't match an existing memory yet is fine; it marks something worth writing later, not an error.",
-    "",
-    "`user` \u2014 who the user is (role, expertise, preferences). `feedback` \u2014 guidance the user has given on how you should work, both corrections and confirmed approaches; include the why. `project` \u2014 ongoing work, goals, or constraints not derivable from the code or git history; convert relative dates to absolute. `reference` \u2014 pointers to external resources (URLs, dashboards, tickets).",
-    "",
-    "After writing the file, add a one-line pointer in `MEMORY.md` (`- [Title](file.md) \u2014 hook`). `MEMORY.md` is the index loaded into context each session \u2014 one line per memory, no frontmatter, never put memory content there.",
-    "",
-    "Before saving, check for an existing file that already covers it \u2014 update that file rather than creating a duplicate; delete memories that turn out to be wrong. Don't save what the repo already records (code structure, past fixes, git history, AGENTS.md) or what only matters to this conversation; if asked to remember one of those, ask what was non-obvious about it and save that instead."
-  ].join("\n");
 }
 
 // src/official/subagents.ts
@@ -582,6 +545,453 @@ function localIsoDate(now = /* @__PURE__ */ new Date()) {
   return `${y}-${m}-${d}`;
 }
 
+// src/tools/agent.ts
+function unknownAgentTypeError(subagentType) {
+  return `Agent type '${subagentType}' not found. Available agents: general-purpose, Explore`;
+}
+var DSH_TOOL = {
+  Bash: "bash",
+  Glob: "glob",
+  Grep: "grep",
+  Read: "read",
+  Write: "write",
+  Edit: "edit",
+  WebFetch: "web_fetch",
+  WebSearch: "web_search",
+  TodoWrite: "todo_write",
+  TodoRead: "todo_read",
+  Skill: "skill",
+  Agent: "agent",
+  Task: "task",
+  AskUserQuestion: "ask_user_question"
+};
+function mapTools(officialNames) {
+  const out = [];
+  for (const name of officialNames) {
+    const dsh = DSH_TOOL[name];
+    if (dsh !== void 0 && !out.includes(dsh)) out.push(dsh);
+  }
+  return out;
+}
+var EXPLORE_OFFICIAL_TOOLS = ["Bash", "Glob", "Grep", "Read", "WebFetch", "WebSearch", "TodoWrite"];
+function childPersona(profile, cwd) {
+  const base = profile.systemPrompt.trim() === "" ? buildExploreAgentPrompt({ embeddedSearchEnabled: false }) : profile.systemPrompt;
+  const notes = buildSubagentCommonNotes();
+  const env = buildSubagentEnvironmentContext({
+    agentPrompt: base,
+    envInfo: { ...collectEnvInfo(cwd), cwd }
+  });
+  return [base, "", notes, "", env].join("\n");
+}
+function childShapes(cwd) {
+  const explore = createBuiltInExploreAgentProfile();
+  const general = createBuiltInGeneralPurposeAgentProfile();
+  return {
+    "general-purpose": {
+      persona: childPersona(general, cwd),
+      // official general-purpose profile: tools: "*"
+      toolFilter: { allow: mapTools(["Bash", "Glob", "Grep", "Read", "Write", "Edit", "WebFetch", "WebSearch", "TodoWrite", "TodoRead", "Skill", "Agent", "AskUserQuestion"]) },
+      continuable: true
+    },
+    Explore: {
+      persona: childPersona(explore, cwd),
+      toolFilter: { allow: mapTools(EXPLORE_OFFICIAL_TOOLS) },
+      continuable: false
+    }
+  };
+}
+function routeAgentType(subagentType) {
+  if (subagentType === void 0 || subagentType === "general-purpose") return "general-purpose";
+  if (subagentType === "Explore") return "Explore";
+  throw new Error(unknownAgentTypeError(subagentType));
+}
+function renderAgentResult(value) {
+  if (value.kind === "continuable") {
+    return [{ type: "text", text: `Agent running with ID: ${value.subagentId} (use send_message with agent_id '${value.subagentId}' to continue this agent)` }];
+  }
+  if (value.kind === "background") {
+    return [{ type: "text", text: `Agent running in background with ID: ${value.backgroundTaskId}. You will be notified when it completes.` }];
+  }
+  const finalText = textOf(value.output);
+  return [{ type: "text", text: `${finalText}
+agentId: ${value.runId} (use send_message with agent_id '${value.runId}' to continue this agent)` }];
+}
+function textOf(output) {
+  if (!Array.isArray(output)) return "";
+  return output.filter((block) => typeof block === "object" && block !== null && !Array.isArray(block) && block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+}
+function agentToolDescription() {
+  const roster = formatAgentProfilesForPrompt([
+    createBuiltInGeneralPurposeAgentProfile(),
+    createBuiltInExploreAgentProfile()
+  ]) ?? "";
+  return [
+    "Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.",
+    "",
+    roster,
+    "",
+    "When using the Agent tool, specify a subagent_type parameter to select which agent type to use. If omitted, the general-purpose agent is used.",
+    "",
+    "## When to use",
+    "",
+    "Reach for this when the task matches an available agent type, when you have independent work to run in parallel, or when answering would mean reading across several files \u2014 delegate it and you keep the conclusion, not the file dumps. For a single-fact lookup where you already know the file, symbol, or value, search directly. Once you've delegated a search, don't also run it yourself \u2014 wait for the result.",
+    "",
+    "- The agent's final message is returned to you as the tool result; it is not shown to the user \u2014 relay what matters.",
+    "- A new Agent call starts fresh, so the prompt must be self-contained.",
+    "- `run_in_background: true` runs the agent asynchronously; you'll be notified when it completes.",
+    "- When you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently."
+    // Official gate-closed branch: the CreateWorkflow bullet is omitted because
+    // this deployment ships no CreateWorkflow tool.
+  ].join("\n");
+}
+function registerAgentTool(ctx) {
+  const cwd = process.cwd();
+  const shapes = childShapes(cwd);
+  const description = agentToolDescription();
+  ctx.tools.register(defineTool2({
+    name: "agent",
+    description,
+    parameters: {
+      description: { type: "string", required: true, description: "A short (3-5 word) description of the task" },
+      prompt: { type: "string", required: true, description: "The task for the agent to perform" },
+      subagent_type: { type: "string", description: "The type of specialized agent to use for this task" },
+      run_in_background: {
+        type: "boolean",
+        description: "Set to true to run this agent in the background. You will be notified when it completes."
+      }
+    },
+    output: {
+      schema: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              kind: { type: "string", required: true, const: "foreground" },
+              runId: { type: "string", required: true },
+              output: { type: "array", required: true }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              kind: { type: "string", required: true, const: "continuable" },
+              subagentId: { type: "string", required: true }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              kind: { type: "string", required: true, const: "background" },
+              backgroundTaskId: { type: "string", required: true }
+            }
+          }
+        ]
+      },
+      render: (_args, value) => renderAgentResult(value)
+    },
+    async execute(args, exec) {
+      const parent = exec.agent;
+      if (!parent) throw new Error("agent tool requires a calling agent (exec.agent was undefined)");
+      const childType = routeAgentType(args.subagent_type);
+      const shape = shapes[childType];
+      const runInBackground = args.run_in_background ?? shape.continuable;
+      const startRequest = {
+        label: args.description,
+        prompt: [{ type: "text", text: args.prompt }],
+        parent,
+        persona: shape.persona,
+        toolFilter: { allow: [...shape.toolFilter.allow] }
+      };
+      if (runInBackground && shape.continuable) {
+        const started = await ctx.subagents.startContinuable({
+          provider: "spawn",
+          label: args.description,
+          request: startRequest,
+          signal: exec.signal
+        });
+        return { kind: "continuable", subagentId: String(started.childId) };
+      }
+      if (runInBackground) {
+        const jobs = ctx.get("jobs");
+        if (jobs === void 0) {
+          throw new Error("background jobs unavailable: load @deepseek-ai/dsh-jobs and @deepseek-ai/dsh-tool-jobs");
+        }
+        const id = jobs.start({
+          kind: "subagent",
+          label: args.description,
+          owner: SessionId(parent.session.id),
+          run: () => {
+            const controller = new AbortController();
+            const start = ctx.subagents.start("spawn", { ...startRequest, signal: controller.signal });
+            return {
+              cancel: (reason) => {
+                controller.abort(reason ?? "background agent task killed");
+              },
+              done: settleStart(start, controller.signal)
+            };
+          }
+        });
+        return { kind: "background", backgroundTaskId: String(id) };
+      }
+      const run = await ctx.subagents.start("spawn", { ...startRequest, signal: exec.signal });
+      return await settleForegroundRun(run);
+    }
+  }));
+}
+async function settleForegroundRun(run) {
+  let result;
+  try {
+    result = await run.result;
+  } finally {
+  }
+  if (result.stopReason !== "completed") {
+    const detail = result.diagnostic !== void 0 ? ` (${result.diagnostic})` : "";
+    throw new Error(`subagent ended with stopReason '${result.stopReason}'${detail}`);
+  }
+  return {
+    kind: "foreground",
+    runId: String(run.id),
+    output: result.output.map((block) => JSON.parse(JSON.stringify(block)))
+  };
+}
+async function settleStart(start, signal) {
+  try {
+    const run = await start;
+    const result = await run.result;
+    const text = textOf(result.output);
+    if (result.stopReason !== "completed") {
+      return { status: "failed", detail: `stopReason ${result.stopReason}${result.diagnostic !== void 0 ? `: ${result.diagnostic}` : ""}`, result: text };
+    }
+    return { status: "completed", result: text };
+  } catch (error) {
+    if (signal.aborted) return { status: "killed", detail: "cancelled" };
+    return { status: "failed", detail: String(error.message ?? error) };
+  }
+}
+
+// src/official/identity.ts
+var SECURITY_NOTICE = "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.";
+function buildSecurityNotice() {
+  return SECURITY_NOTICE;
+}
+function buildHarnessBlock() {
+  return [
+    "# Harness",
+    "- Text you output outside of tool use is displayed to the user as Github-flavored markdown in a terminal.",
+    "- Tools run behind a user-selected permission mode; a denied call means the user declined it \u2014 adjust, don't retry verbatim.",
+    "- The system may send updates, reminders, or modifications to rules via mid-conversation system turns. These are system-controlled, unlike function results. Hooks may intercept tool calls; treat hook output as user feedback.",
+    "- Prefer the dedicated file/search tools over shell commands when one fits. Independent tool calls can run in parallel in one response.",
+    "- Reference code as `file_path:line_number` \u2014 it's clickable."
+  ].join("\n");
+}
+
+// src/official/tool-descriptions.ts
+var READ_DEFAULT_MAX_LINES = 2e3;
+var DEFAULT_BASH_TIMEOUT_MS = 12e4;
+var DEFAULT_BASH_MAX_TIMEOUT_MS = 6e5;
+function buildBashProviderDescription(input) {
+  return [
+    "Executes a bash command and returns its output.",
+    "",
+    "- Working directory persists between calls, but prefer absolute paths \u2014 `cd` in a compound command can trigger a permission prompt. Shell state (env vars, functions) does not persist; the shell is initialized from the user's profile.",
+    "- IMPORTANT: Avoid using this tool to run `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or after you have verified that a dedicated tool cannot accomplish your task. Instead, use the appropriate dedicated tool as this will provide a much better experience for the user.",
+    `- \`timeout\` is in milliseconds: default ${input.defaultTimeoutMs}, max ${input.maxTimeoutMs}.`,
+    "- `run_in_background` runs the command detached: it keeps running across turns and re-invokes you when it exits. No `&` needed.",
+    "",
+    "# Git",
+    "- Interactive flags (`-i`, e.g. `git rebase -i`) are not supported in this environment.",
+    "- Use the `gh` CLI for GitHub operations (PRs, issues, API).",
+    "- Commit or push only when the user asks. If on the default branch, branch first."
+  ].join("\n");
+}
+function buildReadDescription() {
+  return [
+    "Reads a file from the local filesystem.",
+    "",
+    "- `file_path` must be an absolute path.",
+    `- Reads up to ${READ_DEFAULT_MAX_LINES} lines by default.`,
+    "- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters",
+    "- Results are returned using cat -n format, with line numbers starting at 1",
+    "- Reads images (PNG, JPG, \u2026) and presents them visually.",
+    "- Reads videos (MP4, MOV, WEBM, \u2026) and presents them as video input (subject to ZCode's video input limit).",
+    "- Reading a directory, a missing file, or an empty file returns an error or system reminder rather than content.",
+    "- Do NOT re-read a file you just edited to verify \u2014 Edit/Write would have errored if the change failed, and the harness tracks file state for you."
+  ].join("\n");
+}
+function buildWriteDescription() {
+  return "Writes a file to the local filesystem, overwriting if one exists.\n\nWhen to use: creating a new file, or fully replacing one you've already Read. Overwriting an existing file you haven't Read will fail. For partial changes, use Edit instead.";
+}
+function buildEditDescription() {
+  return "Performs exact string replacement in a file.\n\n- You must Read the file in this conversation before editing, or the call will fail.\n- `old_string` must match the file exactly, including indentation, and be unique \u2014 the edit fails otherwise. Strip the Read line prefix (line number + tab) before matching.\n- `replace_all: true` replaces every occurrence instead.";
+}
+function buildGlobDescription() {
+  return 'Fast file pattern matching. Supports glob patterns like "**/*.js" or "src/**/*.ts". Returns matching file paths sorted by modification time.';
+}
+function buildGrepDescription() {
+  return 'Content search built on ripgrep. Prefer this over `grep`/`rg` via Bash \u2014 results integrate with the permission UI and file links.\n\n- Full regex syntax (e.g. "log.*Error", "function\\s+\\w+"). Ripgrep, not grep \u2014 escape literal braces (`interface\\{\\}`).\n- Filter with `glob` (e.g. "**/*.tsx") or `type` (e.g. "js", "py", "rust").\n- `output_mode`: "content" (matching lines), "files_with_matches" (paths only, default), or "count".\n- `multiline: true` for patterns that span lines.';
+}
+function buildWebFetchDescription() {
+  return "Fetches a URL, converts the page to markdown, and answers `prompt` against it using a small fast model.\n\n- Fails on authenticated/private URLs \u2014 use an authenticated MCP tool or `gh` for those instead.\n- HTTP is upgraded to HTTPS. Cross-host redirects are returned to you rather than followed; call again with the redirect URL.\n- Responses are cached for 15 minutes per URL.";
+}
+var WEBSEARCH_MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December"
+];
+function buildWebSearchProviderDescription(now = /* @__PURE__ */ new Date()) {
+  const currentMonth = `${WEBSEARCH_MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
+  return [
+    "Search the web. Returns result blocks with titles and URLs. US-only.",
+    "",
+    `- The current month is ${currentMonth} \u2014 use this when searching for recent information.`,
+    "- `allowed_domains` / `blocked_domains` filter results.",
+    "Sources:"
+  ].join("\n");
+}
+var TODO_READ_DESCRIPTION2 = "Read the current session todo list";
+function buildTodoWriteDescription() {
+  return 'Create and update a task list for the current session. The list is rendered to the user as your working plan.\n\n- Each todo has \\`content\\`, \\`status\\` ("pending" | "in_progress" | "completed"), and \\`priority\\` ("high" | "medium" | "low").\n- Send the full list each call; it replaces the previous one.\n- Keep one item \\`in_progress\\` at a time and mark it \\`completed\\` when done.';
+}
+function buildSkillDescription() {
+  return 'Execute a skill within the main conversation\n\nWhen users ask you to perform tasks, check if any of the available skills match. Skills provide specialized capabilities and domain knowledge.\n\nWhen users reference a "slash command" or "/<something>", they are referring to a skill. Use this tool to invoke it.\n\nHow to invoke:\n- Set \\`skill\\` to the exact name of an available skill (no leading slash). For plugin-namespaced skills use the fully qualified \\`plugin:skill\\` form.\n- Set \\`args\\` to pass optional arguments.\n\nImportant:\n- Available skills are listed in system-reminder messages in the conversation\n- Only invoke a skill that appears in that list, or one the user explicitly typed as \\`/<name>\\` in their message. Never guess or invent a skill name from training data; otherwise do not call this tool\n- When a skill matches the user\'s request, this is a BLOCKING REQUIREMENT: invoke the relevant Skill tool BEFORE generating any other response about the task\n- NEVER mention a skill without actually calling this tool\n- Do not invoke a skill that is already running\n- Do not use this tool for built-in CLI commands (like /help, /clear, etc.)\n- If you see a <command-name> tag in the current conversation turn, the skill has ALREADY been loaded - follow the instructions directly instead of calling this tool again\n';
+}
+var ASK_USER_QUESTION_DESCRIPTION = "Use this tool only when you are blocked on a decision that is genuinely the user's to make: one you cannot resolve from the request, the code, or sensible defaults.\n\nUsage notes:\nOther\n- Use multiSelect: true to allow multiple answers to be selected for a question\n(Recommended)\n\nIs my plan ready?\nShould I proceed?\nthe plan\n\nReserve this for decisions where the user's answer changes what you do next \u2014 not for choices with a conventional default or facts you can verify in the codebase yourself. In those cases pick the obvious option, mention it in your response, and proceed.\n\nPreview feature:\nUse the optional `preview` field on options when presenting concrete artifacts that users need to visually compare:\n- ASCII mockups of UI layouts or components\n- Code snippets showing different implementations\n- Diagram variations\n- Configuration examples\n\nPreview content is rendered as markdown in a monospace box. Multi-line text with newlines is supported. When any option has a preview, the UI switches to a side-by-side layout with a vertical option list on the left and preview on the right. Do not use previews for simple preference questions where labels and descriptions suffice. Note: previews are only supported for single-select questions (not multiSelect).\n";
+var EXIT_PLAN_MODE_MODEL_INSTRUCTIONS = [
+  `Use this tool when you have finished writing your plan and are ready for user approval.
+
+## How This Tool Works
+- You should have already explored the codebase and finalized the plan you want the user to review
+- Pass the complete plan in the plan field; the user will review that content before approving implementation
+- This tool simply signals that you're done planning and ready for the user to review and approve
+- The user will see the contents of the plan parameter when they review it
+
+## When to Use This Tool
+IMPORTANT: Only use this tool when the task requires planning the implementation steps of a task that requires writing code. For research tasks where you're gathering information, searching files, reading files or in general trying to understand the codebase - do NOT use this tool.
+
+## Before Using This Tool
+Ensure your plan is complete and unambiguous:
+- If you have unresolved questions about requirements or approach, use AskUserQuestion before finalizing your plan
+- Once your plan is finalized, use THIS tool to request approval
+
+**Important:** Do NOT use AskUserQuestion to ask "Is this plan okay?" or "Should I proceed?" - that's exactly what THIS tool does. ExitPlanMode inherently requests user approval of your plan.`
+];
+function buildAgentProviderDescription(agentList) {
+  return [
+    "Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.",
+    "",
+    agentList,
+    "",
+    "When using the Agent tool, specify a subagent_type parameter to select which agent type to use. If omitted, the general-purpose agent is used.",
+    "",
+    "## When to use",
+    "",
+    "Reach for this when the task matches an available agent type, when you have independent work to run in parallel, or when answering would mean reading across several files \u2014 delegate it and you keep the conclusion, not the file dumps. For a single-fact lookup where you already know the file, symbol, or value, search directly. Once you've delegated a search, don't also run it yourself \u2014 wait for the result.",
+    "",
+    "- The agent's final message is returned to you as the tool result; it is not shown to the user \u2014 relay what matters.",
+    "- A new Agent call starts fresh, so the prompt must be self-contained.",
+    "- `run_in_background: true` runs the agent asynchronously; you'll be notified when it completes.",
+    "- When you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently."
+  ].join("\n");
+}
+function buildTaskDescription(agentDescription) {
+  return [
+    "Claude Code-compatible alias for the Agent tool. Use this when plugin instructions ask for the Task tool.",
+    "",
+    agentDescription
+  ].join("\n");
+}
+
+// src/official/dynamic-sections.ts
+var COMMUNICATION_PROMPTS = {
+  default: "Write code that reads like the surrounding code: match its comment density, naming, and idiom.",
+  additional: {
+    beforeDefault: [
+      "# Communicating with the user",
+      "",
+      "Your text output is what the user reads; they usually can't see your thinking or the raw tool results. Write it for a teammate who stepped away and is catching up, not for a log file: they don't know the codenames or shorthand you created along the way, and they didn't watch your process unfold. Before your first tool call, say in a sentence what you're about to do; while working, give brief updates when you find something load-bearing or change direction.",
+      "",
+      "Text you write between tool calls may not be shown to the user. Everything the user needs from this turn \u2014 answers, summaries, findings, conclusions, deliverables \u2014 must be in the final text message of your turn, with no tool calls after it. Keep text between tool calls to brief status notes. If something important appeared only mid-turn or in your thinking, restate it in that final message.",
+      "",
+      'Lead with the outcome. Your first sentence after finishing should answer "what happened" or "what did you find" \u2014 the thing the user would ask for if they said "just give me the TLDR." Supporting detail and reasoning come after, for readers who want them.',
+      "",
+      "Being readable and being concise are different things, and readable matters more. If the user has to reread your summary or ask you to explain, any time saved by brevity is gone. The way to keep output short is to be selective about what you include (drop details that don't change what the reader would do next), not to compress the writing into fragments, abbreviations, arrow chains like `A \u2192 B \u2192 fails`, or jargon. What you do include, write in complete sentences with the technical terms spelled out. Don't make the reader cross-reference labels or numbering you invented earlier; say what you mean in place.",
+      "",
+      "Match the response to the question: a simple question gets a direct answer in prose, not headers and sections. Use tables only for short enumerable facts, with explanations in the surrounding prose rather than the cells. Calibrate to the user \u2014 a bit tighter for an expert, more explanatory for someone newer."
+    ].join("\n"),
+    afterDefault: "Only write a code comment to state a constraint the code itself can't show \u2014 never to say where it came from, what the next line does, or why your change is correct; that's you talking to the reviewer, not the next reader, and it's noise the moment the PR merges."
+  }
+};
+var CONTEXT_MANAGEMENT_PROMPTS = {
+  default: [
+    "# Context management",
+    "When the conversation grows long, some or all of the current context is summarized; the summary, along with any remaining unsummarized context, is provided in the next context window so work can continue \u2014 you don't need to wrap up early or hand off mid-task."
+  ].join("\n"),
+  additional: [
+    "When you have enough information to act, act. Do not re-derive facts already established in the conversation, re-litigate a decision the user has already made, or narrate options you will not pursue. If you are weighing a choice, give a recommendation, not an exhaustive survey",
+    "",
+    "You are operating autonomously. The user is not watching in real time and cannot answer questions mid-task, so asking 'Want me to\u2026?' or 'Shall I\u2026?' will block the work. For reversible actions that follow from the original request, proceed without asking. Stop only for destructive actions or genuine scope changes the user must decide. Offering follow-ups after the task is done is fine; asking permission before doing the work is not.",
+    "",
+    "Exception: when the user is describing a problem, asking a question, or thinking out loud rather than requesting a change, the deliverable is your assessment. Report your findings and stop. Don't apply a fix until they ask for one.",
+    "",
+    "Before ending your turn, check your last paragraph. If it is a plan, an analysis, a question, a list of next steps, or a promise about work you have not done ('I'll\u2026', 'let me know when\u2026'), do that work now with tool calls. That includes retrying after errors and gathering missing information yourself. Do not stop because the context or session is long. End your turn only when the task is complete or you are blocked on input only the user can provide.",
+    "",
+    "Before running a command that changes system state \u2014 restarts, deletes, config edits \u2014 check that the evidence actually supports that specific action. A signal that pattern-matches to a known failure may have a different cause."
+  ].join("\n")
+};
+function buildDynamicBehaviorText() {
+  return [
+    COMMUNICATION_PROMPTS.additional.beforeDefault,
+    "",
+    COMMUNICATION_PROMPTS.default,
+    COMMUNICATION_PROMPTS.additional.afterDefault,
+    "",
+    "For actions that are hard to reverse or outward-facing, confirm first unless durably authorized or explicitly told to proceed without asking; approval in one context doesn't extend to the next. Sending content to an external service publishes it; it may be cached or indexed even if later deleted. Before deleting or overwriting, look at the target \u2014 if what you find contradicts how it was described, or you didn't create it, surface that instead of proceeding. Report outcomes faithfully: if tests fail, say so with the output; if a step was skipped, say that; when something is done and verified, state it plainly without hedging."
+  ].join("\n");
+}
+function buildContextManagementText() {
+  return [CONTEXT_MANAGEMENT_PROMPTS.default, "", CONTEXT_MANAGEMENT_PROMPTS.additional].join("\n");
+}
+
+// src/official/memory.ts
+function buildMemoryText(memoryRoot) {
+  return [
+    "# Memory",
+    "",
+    `You have a persistent file-based memory at \`${memoryRoot}/\`. This directory already exists \u2014 write to it directly with the Write tool (do not run mkdir or check for its existence). Each memory is one file holding one fact, with frontmatter:`,
+    "",
+    "```markdown",
+    "---",
+    "name: <short-kebab-case-slug>",
+    "description: <one-line summary \u2014 used to decide relevance during recall>",
+    "metadata:",
+    "  type: user | feedback | project | reference",
+    "---",
+    "",
+    "<the fact; for feedback/project, follow with **Why:** and **How to apply:** lines. Link related memories with [[their-name]].>",
+    "```",
+    "",
+    "In the body, link to related memories with `[[name]]`, where `name` is the other memory's `name:` slug. Link liberally \u2014 a `[[name]]` that doesn't match an existing memory yet is fine; it marks something worth writing later, not an error.",
+    "",
+    "`user` \u2014 who the user is (role, expertise, preferences). `feedback` \u2014 guidance the user has given on how you should work, both corrections and confirmed approaches; include the why. `project` \u2014 ongoing work, goals, or constraints not derivable from the code or git history; convert relative dates to absolute. `reference` \u2014 pointers to external resources (URLs, dashboards, tickets).",
+    "",
+    "After writing the file, add a one-line pointer in `MEMORY.md` (`- [Title](file.md) \u2014 hook`). `MEMORY.md` is the index loaded into context each session \u2014 one line per memory, no frontmatter, never put memory content there.",
+    "",
+    "Before saving, check for an existing file that already covers it \u2014 update that file rather than creating a duplicate; delete memories that turn out to be wrong. Don't save what the repo already records (code structure, past fixes, git history, AGENTS.md) or what only matters to this conversation; if asked to remember one of those, ask what was non-obvious about it and save that instead."
+  ].join("\n");
+}
+
 // src/official/plan-workflow.ts
 var EXPLORE_AGENT_TYPE2 = "Explore";
 var ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
@@ -646,7 +1056,6 @@ function buildPlanModeSparseReminderBody() {
 }
 
 // src/index.ts
-var inject = ["systemPrompt"];
 var CLI_PREFIX_PROMPT = "You are ZCode, an interactive coding agent";
 var ZCODE_NAME = {
   read: "Read",
@@ -692,7 +1101,7 @@ function buildSections(env) {
     grep: buildGrepDescription(),
     web_fetch: buildWebFetchDescription(),
     web_search: buildWebSearchProviderDescription(),
-    todo_read: TODO_READ_DESCRIPTION,
+    todo_read: TODO_READ_DESCRIPTION2,
     todo_write: buildTodoWriteDescription(),
     skill: buildSkillDescription(),
     agent: buildAgentProviderDescription(profileRoster ?? ""),
@@ -737,8 +1146,11 @@ Today's date is ${localIsoDate()}.` }
   }
   return sections;
 }
+var inject = ["systemPrompt", "tools", "sessionProjections", "subagents"];
 function apply(ctx) {
   const env = { cwd: process.cwd() };
+  registerTodoTools(ctx);
+  registerAgentTool(ctx);
   ctx.effect(function* () {
     for (const section of buildSections(env)) {
       yield ctx.systemPrompt.section({

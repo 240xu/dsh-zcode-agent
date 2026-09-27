@@ -20,8 +20,6 @@
  * @module @deepseek-ai/dsh-zcode-official
  */
 import type { Context } from '@deepseek-ai/cordis';
-/** Service dependencies: the system prompt section registry. */
-export declare const inject: readonly ["systemPrompt"];
 import { collectEnvInfo, localIsoDate, memoryRootFor } from './env-live.ts';
 export interface ZcodeSection {
     readonly name: string;
@@ -38,6 +36,9 @@ export interface ZcodeEnv {
 }
 /** Pure assembly so tests can assert section text without mounting cordis. */
 export declare function buildSections(env: ZcodeEnv): ZcodeSection[];
+/** Tool + prompt dependencies: sections ride systemPrompt; the official todo
+ * and Agent rows shadow the core rows inside the preset scope. */
+export declare const inject: readonly ["systemPrompt", "tools", "sessionProjections", "subagents"];
 export declare function apply(ctx: Context): void;
 export { collectEnvInfo, memoryRootFor, localIsoDate };
 export { EXPLORE_AGENT_TYPE, GENERAL_PURPOSE_AGENT_TYPE, buildExploreAgentPrompt, buildGeneralPurposeSystemPrompt, buildSubagentCommonNotes, buildSubagentEnvironmentContext, EXPLORE_AGENT_ALLOWED_TOOLS, formatExploreAllowedToolsForAgentDescription, builtInAgentProfiles, } from './official/subagents.ts';

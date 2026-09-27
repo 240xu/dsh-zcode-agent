@@ -22,10 +22,11 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-system-prompt'
+import { registerTodoTools } from './tools/todo.ts'
+import { registerAgentTool } from './tools/agent.ts'
 import { buildSecurityNotice, buildHarnessBlock } from './official/identity.ts'
 
 /** Service dependencies: the system prompt section registry. */
-export const inject = ['systemPrompt'] as const
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import {
   ASK_USER_QUESTION_DESCRIPTION,
@@ -164,8 +165,15 @@ export function buildSections(env: ZcodeEnv): ZcodeSection[] {
   return sections
 }
 
+/** Tool + prompt dependencies: sections ride systemPrompt; the official todo
+ * and Agent rows shadow the core rows inside the preset scope. */
+export const inject = ['systemPrompt', 'tools', 'sessionProjections', 'subagents'] as const
+
 export function apply(ctx: Context): void {
   const env: ZcodeEnv = { cwd: process.cwd() }
+  // Official-shape todo + Agent rows (preset-scope shadows of the core rows).
+  registerTodoTools(ctx)
+  registerAgentTool(ctx)
   ctx.effect(function* () {
     for (const section of buildSections(env)) {
       yield ctx.systemPrompt.section({
