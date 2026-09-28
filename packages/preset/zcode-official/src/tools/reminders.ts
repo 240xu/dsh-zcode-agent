@@ -67,7 +67,9 @@ function todoReminderBody(todos: Array<{ content: string; status: string; priori
     "The TodoWrite tool hasn't been used recently. If you're working on tasks that would benefit from tracking progress, consider using the TodoWrite tool to track progress. Also consider cleaning up the todo list if it has become stale and no longer matches what you are working on. Only use it if it's relevant to the current work. This is just a gentle reminder - ignore if not applicable.",
   ]
   if (todos.length > 0) {
-    const currentTodos = `[${todos.map(t => `${JSON.stringify(t.content)}, ${t.status}, ${t.priority}`).join('\n')}]`
+    // Official formatTodoListForReminder (runtime-reminders.ts): numbered
+    // [status] lines; priority is not part of the reminder rendering.
+    const currentTodos = todos.map((t, i) => `${i + 1}. [${t.status}] ${t.content}`).join('\n')
     lines.push('', 'Here are the existing contents of your todo list:', '', currentTodos)
   }
   return lines.join('\n')

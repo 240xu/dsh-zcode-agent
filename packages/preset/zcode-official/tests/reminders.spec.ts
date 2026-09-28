@@ -83,7 +83,8 @@ describe('todo reminder cadence (official 10/10)', () => {
     await run(20)
     expect(reminderTexts.length).toBe(1)
     expect(reminderTexts[0]).toContain('task-a')
-    expect(reminderTexts[0]).toContain('high')
+    // Official formatTodoListForReminder: numbered [status] lines, no priority.
+    expect(reminderTexts[0]).toContain('1. [in_progress] task-a')
   })
 })
 

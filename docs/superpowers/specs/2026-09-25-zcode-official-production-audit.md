@@ -68,3 +68,16 @@ D. 测试：todo schema/输出形状/优先级 sidecar 往返；agent 路由（�
 | Bash shadow | 维持方案 C（跨层 get），同样是零 DSH 源码改动 |
 | 约束验证 | git status: packages/web 零改动；全局 dsh-tool-web/dsh-web-fetch-http 从 pristine 源码重建 |
 
+## 第四轮（deep-diff-scanner 深度审计，零源码改动约束）
+
+| 项 | 结论 |
+|---|---|
+| section 顺序 | ✅ 修正为官方 builder.ts 顺序：cli→identity→dynamic→SessionGuidance→Memory→Env→ContextManagement→（tool semantics）→Git 最后；实测 system prompt 标题序列一致 |
+| Session-specific guidance 独立 section | ✅ 新增 order 115（官方 dynamic-sections.ts:44 的唯一活跃行） |
+| todo reminder 渲染格式 | ✅ 改为官方 formatTodoListForReminder：`N. [status] content` 编号行，去掉 priority |
+| SendMessage/ListModels 描述 | ✅ 官方 SEND_MESSAGE 描述要点入 SURFACE_NOTES；ListModels 声明由 harness 模型选择机制替代 |
+| Explore/GP persona、identity、workflow 小工具、request-user-context/currentDate 包裹 | 已有等价（复核无漂移） |
+| OutputStyle section | 需 runtime（DSH 无 output-style 配置管道） |
+| Desktop Context section | 不做（DSH Web GUI 宿主已注入同源文案，重复） |
+| goal-state-change reminder | 需 runtime（core goal 事件面，preset 层无持久化写入口） |
+

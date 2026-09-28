@@ -1346,7 +1346,7 @@ function todoReminderBody(todos) {
     "The TodoWrite tool hasn't been used recently. If you're working on tasks that would benefit from tracking progress, consider using the TodoWrite tool to track progress. Also consider cleaning up the todo list if it has become stale and no longer matches what you are working on. Only use it if it's relevant to the current work. This is just a gentle reminder - ignore if not applicable."
   ];
   if (todos.length > 0) {
-    const currentTodos = `[${todos.map((t) => `${JSON.stringify(t.content)}, ${t.status}, ${t.priority}`).join("\n")}]`;
+    const currentTodos = todos.map((t, i) => `${i + 1}. [${t.status}] ${t.content}`).join("\n");
     lines.push("", "Here are the existing contents of your todo list:", "", currentTodos);
   }
   return lines.join("\n");
@@ -1589,6 +1589,15 @@ function buildDynamicBehaviorText() {
 function buildContextManagementText() {
   return [CONTEXT_MANAGEMENT_PROMPTS.default, "", CONTEXT_MANAGEMENT_PROMPTS.additional].join("\n");
 }
+function buildSessionGuidanceText(toolNames, hasSkills = false) {
+  const tools = new Set(toolNames);
+  const lines = ["# Session-specific guidance"];
+  if (tools.has("Skill") && hasSkills) {
+    lines.push("- When the user types `/<skill-name>`, invoke it via Skill. Only use skills listed in the user-invocable skills section \u2014 don't guess.");
+  }
+  if (lines.length <= 1) return null;
+  return lines.join("\n");
+}
 
 // src/official/memory.ts
 function buildMemoryText(memoryRoot) {
@@ -1646,7 +1655,8 @@ var PARAMETER_NOTES = {
 };
 var SURFACE_NOTES = [
   "- `EnterPlanMode` / `ExitPlanMode`: plan mode in this deployment is entered by the user (`/plan`); `exit_plan_mode` submits the plan for approval. A user's conversational agreement approves nothing \u2014 only exiting plan mode requests approval.",
-  "- `SendMessage`: continue a background subagent with a follow-up message instead of starting a new one (`send_message`).",
+  "- `SendMessage` (`send_message`): Send a message to another agent. Your plain text output is NOT visible to other agents \u2014 to communicate, you MUST call this tool. Messages from agents are delivered automatically; you don't check an inbox. Refer to local agents by the `agentId` returned in the Agent spawn result. To resume a completed agent, use its `agentId`; it resumes in the background and you'll be notified when it finishes.",
+  "- `ListModels`: this deployment has no dynamic-workflow host; the model catalog surfaces through the harness model-selection mechanism instead. The session model is the user's choice and only the user changes it.",
   "- `TaskOutput` is DEPRECATED upstream: never poll for background results; collect finished background work with `job_output` (wait only when genuinely blocked) and stop irrelevant work with `job_kill` (`TaskStop`).",
   "- `ApplyPatch`: the official registry ships it disabled (commented out) \u2014 perform patch-style edits with `write`/`edit` directly.",
   "- `ReadSessionContext`: read context from another persisted session with the `session_search`, `session_event_search`, `session_trace`, `session_event_trace`, and `session_event_read` tools (e.g. when the user references a prior session or asks to continue it).",
@@ -1701,15 +1711,16 @@ function buildSections(env) {
       text: ["", "You are an interactive ZCode agent that helps users with software engineering tasks.", "", buildSecurityNotice(), "", buildHarnessBlock()].join("\n")
     },
     { name: "zcode-official:dynamic-behavior", order: 110, text: buildDynamicBehaviorText() },
-    { name: "zcode-official:context-management", order: 120, text: buildContextManagementText() },
+    ...buildSessionGuidanceText(["Skill"], true) !== null ? [{ name: "zcode-official:session-guidance", order: 115, text: buildSessionGuidanceText(["Skill"], true) }] : [],
+    { name: "zcode-official:memory", order: 250, text: buildMemoryText(memoryRootFor(env.cwd)) },
     { name: "zcode-official:env", order: 300, text: buildEnvText(info, env.model) },
-    { name: "zcode-official:memory", order: 340, text: buildMemoryText(memoryRootFor(env.cwd)) },
+    { name: "zcode-official:context-management", order: 330, text: buildContextManagementText() },
     { name: "zcode-official:tool-semantics", order: 460, text: blocks.join("\n").trimEnd() },
     { name: "zcode-official:date", order: 490, text: `# currentDate
 Today's date is ${localIsoDate()}.` }
   ];
   if (info.isGitRepository) {
-    sections.splice(5, 0, { name: "zcode-official:sysctx", order: 320, text: buildGitSystemContextText(info) });
+    sections.splice(8, 0, { name: "zcode-official:sysctx", order: 470, text: buildGitSystemContextText(info) });
   }
   return sections;
 }
