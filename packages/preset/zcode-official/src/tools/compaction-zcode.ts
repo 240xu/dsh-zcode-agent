@@ -19,7 +19,24 @@ import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import { contentHasImage, BlockAssembler, LlmError } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { SummarizationInput, SummaryResult } from '@deepseek-ai/dsh-compaction-basic/src/summarizer.ts'
+import type { ContentBlock, RequestMessage, TokenUsage, ToolSchema } from '@deepseek-ai/dsh-llm'
+/** Structural mirror of compaction-basic's SummarizationInput (RequestMessage prefix). */
+interface SummarizationInput {
+  readonly messages: readonly RequestMessage[]
+  readonly tools?: readonly ToolSchema[]
+}
+
+/** Structural mirror of compaction-basic's SummaryResult. */
+type SummaryResult = {
+  summary: ContentBlock[]
+  provider: string
+  model: string
+  maxTokens?: number
+  usage?: TokenUsage
+} & (
+  | { rawOutput: ContentBlock[]; llmStreamCall: true }
+  | { rawOutput?: ContentBlock[]; llmStreamCall?: never }
+)
 import { buildCompactPrompt } from '../official/compact-prompt.ts'
 
 export const inject = ['llm', 'tokenMeter', 'sessions'] as const
@@ -39,10 +56,12 @@ export class ZcodeCompactionEngine extends BasicCompactionEngine {
     agent: Agent,
     signal?: AbortSignal,
   ): Promise<SummaryResult> {
+    const fallback = { provider: 'deepseek-official', model: 'deepseek-chat' }
     const target = conversationTarget(agent)
-    const config = target === undefined
-      ? this.config
-      : resolveTargetPolicy(this.config, target)
+      ?? (this.config.summarizationProvider.length > 0
+        ? { provider: this.config.summarizationProvider, model: this.config.summarizationModel }
+        : fallback)
+    const config = resolveTargetPolicy(this.config as unknown as ResolvedConfigShape, target) as ZcodeCompactionEngine['config']
 
     const instruction = buildCompactPrompt(undefined)
       // DSH lands the summary inside a durable checkpoint wrapper; a later
@@ -51,7 +70,7 @@ export class ZcodeCompactionEngine extends BasicCompactionEngine {
       + '\n\n- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.'
 
     const assembler = new BlockAssembler()
-    const messages = [
+    const messages: RequestMessage[] = [
       ...input.messages,
       {
         role: 'user' as const,
@@ -97,6 +116,12 @@ export class ZcodeCompactionEngine extends BasicCompactionEngine {
   }
 }
 
+interface ResolvedConfigShape {
+  readonly modelPolicies?: ReadonlyArray<{ provider: string; model: string }>
+  readonly summarizationProvider: string
+  readonly summarizationModel: string
+}
+
 // conversationTarget / resolveTargetPolicy are internal to compaction-basic;
 // mirror their public behavior (routed target policy falls back to this.config).
 function conversationTarget(agent: Agent): { provider: string; model: string } | undefined {
@@ -108,9 +133,9 @@ function conversationTarget(agent: Agent): { provider: string; model: string } |
 }
 
 function resolveTargetPolicy(
-  config: ZcodeCompactionEngine['config'],
+  config: ResolvedConfigShape,
   target: { provider: string; model: string },
-): ZcodeCompactionEngine['config'] {
+): ResolvedConfigShape {
   const policy = config.modelPolicies?.find(p => p.provider === target.provider && p.model === target.model)
-  return policy === undefined ? config : { ...config, ...policy } as typeof config
+  return policy === undefined ? config : { ...config, ...policy } as ResolvedConfigShape
 }

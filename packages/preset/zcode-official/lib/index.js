@@ -28,8 +28,8 @@ var TODO_READ_DESCRIPTION = "Read the current session todo list";
 function todoPriorityOf(agent, content) {
   return priorities.get(String(agent.session.id))?.get(content) ?? "medium";
 }
-async function readTodos(ctx2, agent) {
-  const snapshot = ctx2.sessionProjections.snapshot(agent.session, ["todos"]);
+async function readTodos(ctx, agent) {
+  const snapshot = ctx.sessionProjections.snapshot(agent.session, ["todos"]);
   const stripped = snapshot.values["todos"] ?? [];
   const sidecar = priorities.get(String(agent.session.id));
   return stripped.map((item) => ({
@@ -38,8 +38,8 @@ async function readTodos(ctx2, agent) {
     priority: sidecar?.get(item.content) ?? "medium"
   }));
 }
-function registerTodoTools(ctx2) {
-  ctx2.tools.register(defineTool({
+function registerTodoTools(ctx) {
+  ctx.tools.register(defineTool({
     name: "todo_write",
     description: TODO_WRITE_DESCRIPTION,
     parameters: {
@@ -132,7 +132,7 @@ function registerTodoTools(ctx2) {
         });
       }
       if (active > 1) throw new Error(`invalid todos: at most one task may be in_progress (got ${active})`);
-      const oldTodos = await readTodos(ctx2, exec.agent);
+      const oldTodos = await readTodos(ctx, exec.agent);
       exec.agent.session.append("todo/write", {
         todos: todos.map((todo) => ({ content: todo.content, status: todo.status }))
       });
@@ -143,7 +143,7 @@ function registerTodoTools(ctx2) {
     },
     presentCall: (args) => ({ card: "generic", title: "Update todo list", kind: "other", rawInput: args.todos })
   }));
-  ctx2.tools.register(defineTool({
+  ctx.tools.register(defineTool({
     name: "todo_read",
     description: TODO_READ_DESCRIPTION,
     parameters: {},
@@ -174,7 +174,7 @@ function registerTodoTools(ctx2) {
     },
     async execute(_args, exec) {
       if (!exec.agent) throw new Error("todo_read requires an owning agent session");
-      return { todos: await readTodos(ctx2, exec.agent) };
+      return { todos: await readTodos(ctx, exec.agent) };
     },
     presentCall: () => ({ card: "generic", title: "Read todo list", kind: "other", rawInput: {} })
   }));
@@ -227,8 +227,8 @@ function validateOfficial(input) {
     }
   }
 }
-function registerAskUserShadow(ctx2) {
-  ctx2.tools.register(defineTool2({
+function registerAskUserShadow(ctx) {
+  ctx.tools.register(defineTool2({
     name: "ask_user_question",
     description: ASK_USER_QUESTION_DESCRIPTION,
     parameters: {
@@ -288,7 +288,7 @@ function registerAskUserShadow(ctx2) {
     },
     async execute(args, exec) {
       validateOfficial(args);
-      const result = await ctx2.userQuestions.ask({
+      const result = await ctx.userQuestions.ask({
         questions: args.questions.map((question) => ({
           // Official has no caller id; mint one so the seam can echo answers.
           id: crypto.randomUUID(),
@@ -313,6 +313,64 @@ function registerAskUserShadow(ctx2) {
           ...answer
         }))
       };
+    }
+  }));
+}
+
+// src/tools/bash-shadow.ts
+import { defineTool as defineTool3 } from "@deepseek-ai/dsh-tools";
+var MAX_BASH_TIMEOUT_MS = 6e5;
+function registerBashShadow(ctx) {
+  ctx.tools.register(defineTool3({
+    name: "bash",
+    // Model-facing description comes from the official tool-semantics
+    // section; the registry only needs a stable one-line summary.
+    description: "Executes a bash command and returns its output.",
+    parameters: {
+      command: { type: "string", required: true, description: "The command to execute" },
+      timeout: {
+        type: "number",
+        description: `Optional timeout in milliseconds (max ${MAX_BASH_TIMEOUT_MS})`
+      },
+      description: {
+        type: "string",
+        description: "Clear, concise description of what this command does in active voice, 5-10 words (shown in the UI)."
+      },
+      run_in_background: {
+        type: "boolean",
+        description: "Run in the background and return a job id immediately (collect with job_output, stop with job_kill). No timeout applies."
+      }
+    },
+    output: {
+      schema: { type: "object", additionalProperties: true, properties: {} },
+      render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }]
+    },
+    async execute(args, exec) {
+      if (args.command.trim().length === 0) {
+        throw new Error("invalid command: expected a non-empty string");
+      }
+      if (args.timeout !== void 0 && (!Number.isFinite(args.timeout) || args.timeout <= 0 || args.timeout > MAX_BASH_TIMEOUT_MS)) {
+        throw new Error(`invalid timeout: expected a positive number up to ${MAX_BASH_TIMEOUT_MS}, got ${JSON.stringify(args.timeout)}`);
+      }
+      const core = ctx.tools.get("bash", void 0);
+      if (core === void 0 || core.execute === void 0) {
+        throw new Error("bash shadow: core bash definition not found at the global layer");
+      }
+      if (core.isZcodeShadow) {
+        throw new Error("bash shadow: global-layer resolution hit the shadow itself; refusing to recurse");
+      }
+      const nested = await core.execute(
+        {
+          command: args.command,
+          // DSH requires a non-empty description for the permission UI; the
+          // official schema makes it optional — synthesize a neutral one.
+          description: args.description?.trim() || "Run bash command",
+          ...args.timeout !== void 0 ? { timeoutMs: args.timeout } : {},
+          ...args.run_in_background !== void 0 ? { run_in_background: args.run_in_background } : {}
+        },
+        exec
+      );
+      return nested;
     }
   }));
 }
@@ -437,8 +495,8 @@ ${customInstructions}` : "";
 
 // src/tools/compaction-zcode.ts
 var ZcodeCompactionEngine = class extends BasicCompactionEngine {
-  constructor(ctx2) {
-    super(ctx2);
+  constructor(ctx, config) {
+    super(ctx, config);
   }
   /**
    * Official-prompt summarization: same cache-reusing `ctx.llm.stream()` call
@@ -446,8 +504,9 @@ var ZcodeCompactionEngine = class extends BasicCompactionEngine {
    * 9-section prompt instead of the core Markdown-checkpoint instruction.
    */
   async summarize(input, agent, signal) {
-    const target = conversationTarget(agent);
-    const config = target === void 0 ? this.config : resolveTargetPolicy(this.config, target);
+    const fallback = { provider: "deepseek-official", model: "deepseek-chat" };
+    const target = conversationTarget(agent) ?? (this.config.summarizationProvider.length > 0 ? { provider: this.config.summarizationProvider, model: this.config.summarizationModel } : fallback);
+    const config = resolveTargetPolicy(this.config, target);
     const instruction = buildCompactPrompt(void 0) + "\n\n- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.";
     const assembler = new BlockAssembler();
     const messages = [
@@ -467,7 +526,7 @@ var ZcodeCompactionEngine = class extends BasicCompactionEngine {
       purpose: "compaction",
       ...signal === void 0 ? {} : { signal }
     };
-    for await (const chunk of ctx.llm.stream(options)) assembler.push(chunk);
+    for await (const chunk of this.ctx.llm.stream(options)) assembler.push(chunk);
     const finish = assembler.finish;
     const error = finish.kind === "error" || finish.kind === "aborted" ? new LlmError(finish.failure.message, finish.failure.code, finish.failure) : finish.kind === "max-tokens" ? Object.assign(new Error("summarization truncated at the token cap (incomplete checkpoint)"), { code: "MAX_TOKENS" }) : void 0;
     if (error !== void 0) throw error;
@@ -502,7 +561,7 @@ function resolveTargetPolicy(config, target) {
 
 // src/tools/agent.ts
 import { SessionId } from "@deepseek-ai/dsh-session";
-import { defineTool as defineTool3 } from "@deepseek-ai/dsh-tools";
+import { defineTool as defineTool4 } from "@deepseek-ai/dsh-tools";
 
 // src/official/env-info.ts
 var ENVIRONMENT_HEADING = "# Environment";
@@ -967,11 +1026,11 @@ function agentToolDescription() {
     // this deployment ships no CreateWorkflow tool.
   ].join("\n");
 }
-function registerAgentTool(ctx2) {
+function registerAgentTool(ctx) {
   const cwd = process.cwd();
   const shapes = childShapes(cwd);
   const description = agentToolDescription();
-  ctx2.tools.register(defineTool3({
+  ctx.tools.register(defineTool4({
     name: "agent",
     description,
     parameters: {
@@ -1029,7 +1088,7 @@ function registerAgentTool(ctx2) {
         toolFilter: { allow: [...shape.toolFilter.allow] }
       };
       if (runInBackground && shape.continuable) {
-        const started = await ctx2.subagents.startContinuable({
+        const started = await ctx.subagents.startContinuable({
           provider: "spawn",
           label: args.description,
           request: startRequest,
@@ -1038,7 +1097,7 @@ function registerAgentTool(ctx2) {
         return { kind: "continuable", subagentId: String(started.childId) };
       }
       if (runInBackground) {
-        const jobs = ctx2.get("jobs");
+        const jobs = ctx.get("jobs");
         if (jobs === void 0) {
           throw new Error("background jobs unavailable: load @deepseek-ai/dsh-jobs and @deepseek-ai/dsh-tool-jobs");
         }
@@ -1048,7 +1107,7 @@ function registerAgentTool(ctx2) {
           owner: SessionId(parent.session.id),
           run: () => {
             const controller = new AbortController();
-            const start = ctx2.subagents.start("spawn", { ...startRequest, signal: controller.signal });
+            const start = ctx.subagents.start("spawn", { ...startRequest, signal: controller.signal });
             return {
               cancel: (reason) => {
                 controller.abort(reason ?? "background agent task killed");
@@ -1059,7 +1118,7 @@ function registerAgentTool(ctx2) {
         });
         return { kind: "background", backgroundTaskId: String(id) };
       }
-      const run = await ctx2.subagents.start("spawn", { ...startRequest, signal: exec.signal });
+      const run = await ctx.subagents.start("spawn", { ...startRequest, signal: exec.signal });
       return await settleForegroundRun(run);
     }
   }));
@@ -1175,7 +1234,7 @@ function stateFor(agent) {
   const key = String(agent.session.id);
   let s = states.get(key);
   if (s === void 0) {
-    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0 };
+    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0, lastCountedTurn: 0 };
     states.set(key, s);
   }
   return s;
@@ -1195,13 +1254,19 @@ function todoReminderBody(todos) {
   return lines.join("\n");
 }
 function installReminders(agentCtx, getTodos, isPlanMode) {
-  agentCtx.on("agent/pre-step", async ({ agent, step, signal }, next) => {
+  agentCtx.on("agent/pre-step", async ({ agent, turn, step, signal }, next) => {
     const decision = await next();
     signal.throwIfAborted();
     if (decision.kind === "reject") return decision;
     if (step === 1 && decision.messages.length === 0) return decision;
     const state = stateFor(agent);
-    const planMode = isPlanMode(agent);
+    if (turn > state.lastCountedTurn) {
+      state.turnsSinceTodoWrite++;
+      state.turnsSinceTodoReminder++;
+      state.turnsSincePlanReminder++;
+      state.lastCountedTurn = turn;
+    }
+    const planMode = await isPlanMode(agent);
     if (!planMode) resetCountersOnPlanMode(state);
     const reminders = [];
     if (!planMode && state.turnsSinceTodoWrite >= TODO_REMINDER_CONFIG.TURNS_SINCE_WRITE && state.turnsSinceTodoReminder >= TODO_REMINDER_CONFIG.TURNS_BETWEEN_REMINDERS) {
@@ -1209,12 +1274,15 @@ function installReminders(agentCtx, getTodos, isPlanMode) {
       reminders.push(todoReminderBody(todos));
       state.turnsSinceTodoReminder = 0;
     }
-    if (planMode && state.turnsSincePlanReminder >= PLAN_MODE_REMINDER_CONFIG.TURNS_BETWEEN_ATTACHMENTS) {
-      state.planReminderCount++;
-      reminders.push(
-        state.planReminderCount % PLAN_MODE_REMINDER_CONFIG.FULL_REMINDER_EVERY_N_ATTACHMENTS === 1 ? buildPlanModeFullReminderBody() : buildPlanModeSparseReminderBody()
-      );
-      state.turnsSincePlanReminder = 0;
+    if (planMode) {
+      const due = state.planReminderCount === 0 || state.turnsSincePlanReminder >= PLAN_MODE_REMINDER_CONFIG.TURNS_BETWEEN_ATTACHMENTS;
+      if (due) {
+        state.planReminderCount++;
+        reminders.push(
+          state.planReminderCount % PLAN_MODE_REMINDER_CONFIG.FULL_REMINDER_EVERY_N_ATTACHMENTS === 1 ? buildPlanModeFullReminderBody() : buildPlanModeSparseReminderBody()
+        );
+        state.turnsSincePlanReminder = 0;
+      }
     }
     if (reminders.length === 0) return decision;
     const injected = reminders.map((text) => createUserMessage({
@@ -1485,7 +1553,7 @@ var SURFACE_NOTES = [
   "- `ApplyPatch`: the official registry ships it disabled (commented out) \u2014 perform patch-style edits with `write`/`edit` directly.",
   "- `ReadSessionContext`: read context from another persisted session with the `session_search`, `session_event_search`, `session_trace`, `session_event_trace`, and `session_event_read` tools (e.g. when the user references a prior session or asks to continue it).",
   "- `CreateWorkflow`/`SaveWorkflow`/`AmendWorkflow` and the other dynamic-workflow tools are not available in this deployment (the official gate-closed branch): never fabricate workflow tool calls.",
-  "- `WebFetch` official behavior details: cross-host redirects are returned to you as a redirect notice rather than followed (call again with the new URL); responses are cached 15 minutes per URL; private-network and non-public-IP targets are blocked by an egress guard. This deployment follows same-origin redirects and does not implement the 15-minute cache \u2014 re-fetch when freshness matters.",
+  "- `WebFetch` official behavior details: cross-host redirects are returned to you as a redirect notice rather than followed (call again with the new URL); responses are cached 15 minutes per URL; private-network and non-public-IP targets are blocked by an egress guard. This deployment implements the same 15-minute per-URL cache (repeat calls within 15 minutes return the cached fetch; call a slightly different URL to bypass) and upgrades http:// to https:// before requesting.",
   "- `SubmitResult`/`Escalate`/`RespondToCoordinator` exist only inside official dynamic-workflow runs; they are not registered here.",
   "- `CronCreate`/`CronList`/`CronUpdate`/`CronDelete` (persistent workspace automations) and `OffPeakCreate`/`OffPeakList` (server off-peak queue) have no counterpart in this deployment; for in-session scheduled reminders use the available schedule tools.",
   "- The official `Js` (node_repl) tool is disabled by default upstream too; this deployment's equivalent is `run_code` (PTC mode)."
@@ -1548,23 +1616,24 @@ Today's date is ${localIsoDate()}.` }
   return sections;
 }
 var inject = ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions"];
-function apply(ctx2, config = {}) {
+function apply(ctx, config = {}) {
   if (config.role === "compaction") {
-    ctx2.plugin(ZcodeCompactionEngine);
+    ctx.plugin(ZcodeCompactionEngine);
     return;
   }
   const env = { cwd: process.cwd() };
-  registerTodoTools(ctx2);
-  registerAgentTool(ctx2);
-  registerAskUserShadow(ctx2);
+  registerTodoTools(ctx);
+  registerAgentTool(ctx);
+  registerAskUserShadow(ctx);
+  registerBashShadow(ctx);
   if (config.engine === "zcode") {
-    ctx2.plugin(ZcodeCompactionEngine);
+    ctx.plugin(ZcodeCompactionEngine);
   }
-  ctx2.on("agent/created", async ({ agent }) => {
+  ctx.on("agent/created", async ({ agent }) => {
     installReminders(
       agent.ctx,
       (agentArg) => {
-        const snapshot = ctx2.sessionProjections.snapshot(agentArg.session, ["todos"]);
+        const snapshot = ctx.sessionProjections.snapshot(agentArg.session, ["todos"]);
         const stripped = snapshot.values["todos"] ?? [];
         return Promise.resolve(stripped.map((item) => ({
           content: item.content,
@@ -1574,20 +1643,20 @@ function apply(ctx2, config = {}) {
       },
       (agentArg) => {
         try {
-          return ctx2.planMode.get(agentArg).active;
+          return ctx.planMode.get(agentArg).active;
         } catch {
           return false;
         }
       }
     );
   });
-  ctx2.on("tools/post-execute", async (exec, _result, next) => {
+  ctx.on("tools/post-execute", async (exec, _result, next) => {
     if (exec.name === "todo_write" && exec.agent !== void 0) noteTodoWrite(exec.agent);
     return next();
   });
-  ctx2.effect(function* () {
+  ctx.effect(function* () {
     for (const section of buildSections(env)) {
-      yield ctx2.systemPrompt.section({
+      yield ctx.systemPrompt.section({
         name: section.name,
         order: section.order,
         text: section.text

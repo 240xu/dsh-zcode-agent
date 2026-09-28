@@ -35,6 +35,10 @@ export function parseFetchUrl(input: string): URL {
   if (url.username.length > 0 || url.password.length > 0) {
     throw new WebError('credentials in URLs are not allowed', 'WEB_BLOCKED_URL')
   }
+  // Official behavior (webfetch-url.ts): plain http is upgraded to https.
+  if (url.protocol === 'http:') {
+    url.protocol = 'https:'
+  }
   return url
 }
 

@@ -37,11 +37,19 @@ export interface ZcodeEnv {
 /** Pure assembly so tests can assert section text without mounting cordis. */
 export declare function buildSections(env: ZcodeEnv): ZcodeSection[];
 /** Tool + prompt dependencies: sections ride systemPrompt; the official todo
- * and Agent rows shadow the core rows inside the preset scope. */
+ * and Agent rows shadow the core rows inside the preset scope; the compaction
+ * engine rides the compaction realm. */
 export declare const inject: readonly ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions"];
-export declare function apply(ctx: Context): void;
+export interface ZcodePresetConfig {
+    /** When 'zcode', mount ZcodeCompactionEngine instead of the core row. */
+    engine?: 'zcode';
+}
+export declare function apply(ctx: Context, config?: ZcodePresetConfig & {
+    role?: 'preset' | 'compaction';
+}): void;
 export { collectEnvInfo, memoryRootFor, localIsoDate };
 export { EXPLORE_AGENT_TYPE, GENERAL_PURPOSE_AGENT_TYPE, buildExploreAgentPrompt, buildGeneralPurposeSystemPrompt, buildSubagentCommonNotes, buildSubagentEnvironmentContext, EXPLORE_AGENT_ALLOWED_TOOLS, formatExploreAllowedToolsForAgentDescription, builtInAgentProfiles, } from './official/subagents.ts';
 export { buildPlanWorkflow, buildPlanModeFullReminderBody, buildPlanModeSparseReminderBody, } from './official/plan-workflow.ts';
 export { DEFAULT_BASH_TIMEOUT_MS, DEFAULT_BASH_MAX_TIMEOUT_MS, buildAgentProviderDescription, buildBashProviderDescription, buildReadDescription, buildSkillDescription, buildTodoWriteDescription, buildWebSearchProviderDescription, EXIT_PLAN_MODE_MODEL_INSTRUCTIONS, } from './official/tool-descriptions.ts';
+export { ZcodeCompactionEngine } from './tools/compaction-zcode.ts';
 //# sourceMappingURL=index.d.ts.map

@@ -25,6 +25,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-plan-mode'
 import { registerTodoTools, todoPriorityOf } from './tools/todo.ts'
 import { registerAskUserShadow } from './tools/ask-user-shadow.ts'
+import { registerBashShadow } from './tools/bash-shadow.ts'
 import { ZcodeCompactionEngine } from './tools/compaction-zcode.ts'
 import { registerAgentTool } from './tools/agent.ts'
 import { installReminders, noteTodoWrite } from './tools/reminders.ts'
@@ -97,7 +98,7 @@ const SURFACE_NOTES: readonly string[] = [
   '- `ApplyPatch`: the official registry ships it disabled (commented out) — perform patch-style edits with `write`/`edit` directly.',
   '- `ReadSessionContext`: read context from another persisted session with the `session_search`, `session_event_search`, `session_trace`, `session_event_trace`, and `session_event_read` tools (e.g. when the user references a prior session or asks to continue it).',
   '- `CreateWorkflow`/`SaveWorkflow`/`AmendWorkflow` and the other dynamic-workflow tools are not available in this deployment (the official gate-closed branch): never fabricate workflow tool calls.',
-  '- `WebFetch` official behavior details: cross-host redirects are returned to you as a redirect notice rather than followed (call again with the new URL); responses are cached 15 minutes per URL; private-network and non-public-IP targets are blocked by an egress guard. This deployment follows same-origin redirects and does not implement the 15-minute cache — re-fetch when freshness matters.',
+  '- `WebFetch` official behavior details: cross-host redirects are returned to you as a redirect notice rather than followed (call again with the new URL); responses are cached 15 minutes per URL; private-network and non-public-IP targets are blocked by an egress guard. This deployment implements the same 15-minute per-URL cache (repeat calls within 15 minutes return the cached fetch; call a slightly different URL to bypass) and upgrades http:// to https:// before requesting.',
   '- `SubmitResult`/`Escalate`/`RespondToCoordinator` exist only inside official dynamic-workflow runs; they are not registered here.',
   '- `CronCreate`/`CronList`/`CronUpdate`/`CronDelete` (persistent workspace automations) and `OffPeakCreate`/`OffPeakList` (server off-peak queue) have no counterpart in this deployment; for in-session scheduled reminders use the available schedule tools.',
   '- The official `Js` (node_repl) tool is disabled by default upstream too; this deployment\'s equivalent is `run_code` (PTC mode).',
@@ -195,6 +196,7 @@ export function apply(ctx: Context, config: ZcodePresetConfig & { role?: 'preset
   registerTodoTools(ctx)
   registerAgentTool(ctx)
   registerAskUserShadow(ctx)
+  registerBashShadow(ctx)
   // Official compaction prompt engine (replaces the compaction-basic row in
   // the compaction realm; the row's isolate keeps it per-preset).
   if (config.engine === 'zcode') {

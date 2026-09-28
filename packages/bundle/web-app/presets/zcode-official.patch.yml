@@ -36,9 +36,9 @@
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
               maxBytes: 65536
-          - id: tool-bash
-            name: '@deepseek-ai/dsh-tool-bash'
-            disabled: !!js process.platform === 'win32'
+          # The official-shape bash shadow (timeout param, optional
+          # description) is registered by the zcode-official row above;
+          # it delegates to the core bash via the global-layer definition.
           - id: tool-pwsh
             name: '@deepseek-ai/dsh-tool-pwsh'
             disabled: !!js process.platform !== 'win32'

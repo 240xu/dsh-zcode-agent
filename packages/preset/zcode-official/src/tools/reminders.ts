@@ -40,6 +40,8 @@ interface ReminderState {
   planReminderCount: number
   /** Assistant turns since the last plan reminder. */
   turnsSincePlanReminder: number
+  /** Last turn number already counted (pre-step fires per step, not per turn). */
+  lastCountedTurn: number
 }
 
 const states = new Map<string, ReminderState>()
@@ -48,7 +50,7 @@ function stateFor(agent: Agent): ReminderState {
   const key = String(agent.session.id)
   let s = states.get(key)
   if (s === undefined) {
-    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0 }
+    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0, lastCountedTurn: 0 }
     states.set(key, s)
   }
   return s
@@ -76,21 +78,30 @@ function todoReminderBody(todos: Array<{ content: string; status: string; priori
  * @param agentCtx - the agent's scoped context (from agents.create setup or
  *   the preset mount joining the agent).
  */
-export function installReminders(agentCtx: { on: (event: 'agent/pre-step', listener: (payload: { agent: Agent; messages: UserMessage[]; turn: number; step: number; signal: AbortSignal }, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>) => unknown }, getTodos: (agent: Agent) => Promise<Array<{ content: string; status: string; priority: string }>> | undefined, isPlanMode: (agent: Agent) => boolean): void {
-  agentCtx.on('agent/pre-step', async ({ agent, step, signal }, next) => {
+export function installReminders(agentCtx: { on: (event: 'agent/pre-step', listener: (payload: { agent: Agent; turn: number; step: number; signal: AbortSignal }, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>) => unknown }, getTodos: (agent: Agent) => Promise<Array<{ content: string; status: string; priority: string }>> | undefined, isPlanMode: (agent: Agent) => boolean | Promise<boolean>): void {
+  agentCtx.on('agent/pre-step', async ({ agent, turn, step, signal }, next) => {
     const decision = await next()
     signal.throwIfAborted()
     if (decision.kind === 'reject') return decision
     if (step === 1 && decision.messages.length === 0) return decision
 
     const state = stateFor(agent)
-    const planMode = isPlanMode(agent)
+    // Turn counting: pre-step fires per STEP; one turn = its step-1 entry.
+    // Count each new model turn (turn >= 1, not yet counted).
+    if (turn > state.lastCountedTurn) {
+      state.turnsSinceTodoWrite++
+      state.turnsSinceTodoReminder++
+      state.turnsSincePlanReminder++
+      state.lastCountedTurn = turn
+    }
+
+    const planMode = await isPlanMode(agent)
     if (!planMode) resetCountersOnPlanMode(state)
 
     const reminders: string[] = []
 
-    // Todo reminder: official cadence (10/10) — skip entirely in plan mode,
-    // mirroring the official gate (plan-mode turns do not nag about todos).
+    // Todo reminder: official cadence (TURNS_SINCE_WRITE 10 / BETWEEN 10) —
+    // skipped entirely in plan mode (official gate: plan turns don't nag).
     if (!planMode && state.turnsSinceTodoWrite >= TODO_REMINDER_CONFIG.TURNS_SINCE_WRITE
         && state.turnsSinceTodoReminder >= TODO_REMINDER_CONFIG.TURNS_BETWEEN_REMINDERS) {
       const todos = (await getTodos(agent)) ?? []
@@ -98,15 +109,21 @@ export function installReminders(agentCtx: { on: (event: 'agent/pre-step', liste
       state.turnsSinceTodoReminder = 0
     }
 
-    // Plan-mode reminder: full on the 1st/6th/…th attachment, sparse between.
-    if (planMode && state.turnsSincePlanReminder >= PLAN_MODE_REMINDER_CONFIG.TURNS_BETWEEN_ATTACHMENTS) {
-      state.planReminderCount++
-      reminders.push(
-        state.planReminderCount % PLAN_MODE_REMINDER_CONFIG.FULL_REMINDER_EVERY_N_ATTACHMENTS === 1
-          ? buildPlanModeFullReminderBody()
-          : buildPlanModeSparseReminderBody(),
-      )
-      state.turnsSincePlanReminder = 0
+    // Plan-mode reminder: official semantics — the FIRST attachment is
+    // immediate (no prior reminder found), then every TURNS_BETWEEN_ATTACHMENTS
+    // (5) human turns; full on every FULL_EVERY_N (5)th attachment (1st/6th/…).
+    if (planMode) {
+      const due = state.planReminderCount === 0
+        || state.turnsSincePlanReminder >= PLAN_MODE_REMINDER_CONFIG.TURNS_BETWEEN_ATTACHMENTS
+      if (due) {
+        state.planReminderCount++
+        reminders.push(
+          state.planReminderCount % PLAN_MODE_REMINDER_CONFIG.FULL_REMINDER_EVERY_N_ATTACHMENTS === 1
+            ? buildPlanModeFullReminderBody()
+            : buildPlanModeSparseReminderBody(),
+        )
+        state.turnsSincePlanReminder = 0
+      }
     }
 
     if (reminders.length === 0) return decision
@@ -126,14 +143,3 @@ export function noteTodoWrite(agent: Agent): void {
   s.turnsSinceTodoReminder = 0
 }
 
-/** Called on every admitted assistant step (turn boundary bookkeeping). */
-export function noteTurnCompleted(agent: Agent, opts: { todoWrittenThisTurn: boolean }): void {
-  const s = stateFor(agent)
-  if (opts.todoWrittenThisTurn) {
-    s.turnsSinceTodoWrite = 0
-  } else {
-    s.turnsSinceTodoWrite++
-  }
-  s.turnsSinceTodoReminder++
-  s.turnsSincePlanReminder++
-}
