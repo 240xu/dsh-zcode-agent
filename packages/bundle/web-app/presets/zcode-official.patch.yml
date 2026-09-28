@@ -149,11 +149,10 @@
             name: '@deepseek-ai/dsh-tool-todo'
             config:
               allowParallelInProgress: true
-          - id: tool-web
-            name: '@deepseek-ai/dsh-tool-web'
-            config:
-              fetch: true
-              searchTimeoutMs: 60000
+          # The official-shape web_fetch shadow (http→https upgrade,
+          # redirect notice, 15-minute per-URL cache) is registered by the
+          # zcode-official row above via the ctx.web seam; web_search and the
+          # global web_fetch remain available from the base-layer tool-web.
           - id: present
             name: '@deepseek-ai/dsh-tool-present'
           - id: tool-plugin-manager

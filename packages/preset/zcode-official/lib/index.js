@@ -375,6 +375,104 @@ function registerBashShadow(ctx) {
   }));
 }
 
+// src/tools/webfetch-shadow.ts
+import { defineTool as defineTool4 } from "@deepseek-ai/dsh-tools";
+import { WebError } from "@deepseek-ai/dsh-web";
+var WEBFETCH_DESCRIPTION = [
+  "Fetches a URL, converts the page to markdown, and answers `prompt` against it using a small fast model.",
+  "",
+  "- Fails on authenticated/private URLs \u2014 use an authenticated MCP tool or `gh` for those instead.",
+  "- HTTP is upgraded to HTTPS. Cross-host redirects are returned to you rather than followed; call again with the redirect URL.",
+  "- Responses are cached for 15 minutes per URL."
+].join("\n");
+var CACHE_TTL_MS = 15 * 60 * 1e3;
+var cache = /* @__PURE__ */ new Map();
+function readCache(url) {
+  const entry = cache.get(url);
+  if (entry === void 0) return void 0;
+  if (Date.now() - entry.cachedAt > CACHE_TTL_MS) {
+    cache.delete(url);
+    return void 0;
+  }
+  cache.delete(url);
+  cache.set(url, entry);
+  return entry.result;
+}
+function writeCache(url, result) {
+  cache.delete(url);
+  cache.set(url, { result, cachedAt: Date.now() });
+}
+function upgradeScheme(url) {
+  return url.replace(/^http:\/\//i, "https://");
+}
+function redirectNotice(error) {
+  if (error.code !== "WEB_REDIRECT_BLOCKED") return void 0;
+  const target = /to (\S+) is not followed/.exec(error.message)?.[1];
+  return {
+    url: target ?? "redirect",
+    statusCode: 302,
+    body: {
+      kind: "text",
+      content: [
+        `REDIRECT DETECTED: ${error.message}`,
+        target !== void 0 ? `Call WebFetch again with url: ${target}` : "Call WebFetch again with the target URL named above."
+      ].join("\n")
+    },
+    truncated: false
+  };
+}
+function registerWebFetchShadow(ctx) {
+  ctx.tools.register(defineTool4({
+    name: "web_fetch",
+    description: WEBFETCH_DESCRIPTION,
+    parameters: {
+      url: { type: "string", required: true, description: "The URL to fetch content from" },
+      prompt: { type: "string", description: "The prompt to run on the fetched content" }
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          url: { type: "string", required: true },
+          statusCode: { type: "number", required: true },
+          truncated: { type: "boolean", required: true }
+        }
+      },
+      render: (_args, value) => [{
+        type: "text",
+        text: typeof value.body?.content === "string" ? value.body.content : JSON.stringify(value)
+      }]
+    },
+    isConcurrencySafe: () => true,
+    async execute(args, exec) {
+      const upgraded = upgradeScheme(args.url);
+      const cached = readCache(upgraded);
+      if (cached !== void 0) return project(cached);
+      let result;
+      try {
+        result = await ctx.web.fetch({ url: upgraded }, exec.signal);
+      } catch (error) {
+        if (error instanceof WebError) {
+          const notice = redirectNotice(error);
+          if (notice !== void 0) return project(notice);
+        }
+        throw error;
+      }
+      writeCache(upgraded, result);
+      return project(result);
+    }
+  }));
+}
+function project(result) {
+  return {
+    url: result.url,
+    statusCode: result.statusCode,
+    truncated: result.truncated,
+    body: { kind: result.body.kind, content: result.body.content }
+  };
+}
+
 // src/tools/compaction-zcode.ts
 import { BasicCompactionEngine } from "@deepseek-ai/dsh-compaction-basic";
 import { contentHasImage, BlockAssembler, LlmError } from "@deepseek-ai/dsh-llm";
@@ -561,7 +659,7 @@ function resolveTargetPolicy(config, target) {
 
 // src/tools/agent.ts
 import { SessionId } from "@deepseek-ai/dsh-session";
-import { defineTool as defineTool4 } from "@deepseek-ai/dsh-tools";
+import { defineTool as defineTool5 } from "@deepseek-ai/dsh-tools";
 
 // src/official/env-info.ts
 var ENVIRONMENT_HEADING = "# Environment";
@@ -1030,7 +1128,7 @@ function registerAgentTool(ctx) {
   const cwd = process.cwd();
   const shapes = childShapes(cwd);
   const description = agentToolDescription();
-  ctx.tools.register(defineTool4({
+  ctx.tools.register(defineTool5({
     name: "agent",
     description,
     parameters: {
@@ -1615,7 +1713,7 @@ Today's date is ${localIsoDate()}.` }
   }
   return sections;
 }
-var inject = ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions"];
+var inject = ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions", "web"];
 function apply(ctx, config = {}) {
   if (config.role === "compaction") {
     ctx.plugin(ZcodeCompactionEngine);
@@ -1626,6 +1724,7 @@ function apply(ctx, config = {}) {
   registerAgentTool(ctx);
   registerAskUserShadow(ctx);
   registerBashShadow(ctx);
+  registerWebFetchShadow(ctx);
   if (config.engine === "zcode") {
     ctx.plugin(ZcodeCompactionEngine);
   }

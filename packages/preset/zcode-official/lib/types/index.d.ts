@@ -39,7 +39,7 @@ export declare function buildSections(env: ZcodeEnv): ZcodeSection[];
 /** Tool + prompt dependencies: sections ride systemPrompt; the official todo
  * and Agent rows shadow the core rows inside the preset scope; the compaction
  * engine rides the compaction realm. */
-export declare const inject: readonly ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions"];
+export declare const inject: readonly ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions", "web"];
 export interface ZcodePresetConfig {
     /** When 'zcode', mount ZcodeCompactionEngine instead of the core row. */
     engine?: 'zcode';

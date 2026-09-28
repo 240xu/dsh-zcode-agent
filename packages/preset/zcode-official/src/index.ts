@@ -26,6 +26,7 @@ import type {} from '@deepseek-ai/dsh-plan-mode'
 import { registerTodoTools, todoPriorityOf } from './tools/todo.ts'
 import { registerAskUserShadow } from './tools/ask-user-shadow.ts'
 import { registerBashShadow } from './tools/bash-shadow.ts'
+import { registerWebFetchShadow } from './tools/webfetch-shadow.ts'
 import { ZcodeCompactionEngine } from './tools/compaction-zcode.ts'
 import { registerAgentTool } from './tools/agent.ts'
 import { installReminders, noteTodoWrite } from './tools/reminders.ts'
@@ -177,7 +178,7 @@ export function buildSections(env: ZcodeEnv): ZcodeSection[] {
 /** Tool + prompt dependencies: sections ride systemPrompt; the official todo
  * and Agent rows shadow the core rows inside the preset scope; the compaction
  * engine rides the compaction realm. */
-export const inject = ['systemPrompt', 'tools', 'sessionProjections', 'subagents', 'userQuestions'] as const
+export const inject = ['systemPrompt', 'tools', 'sessionProjections', 'subagents', 'userQuestions', 'web'] as const
 
 export interface ZcodePresetConfig {
   /** When 'zcode', mount ZcodeCompactionEngine instead of the core row. */
@@ -197,6 +198,7 @@ export function apply(ctx: Context, config: ZcodePresetConfig & { role?: 'preset
   registerAgentTool(ctx)
   registerAskUserShadow(ctx)
   registerBashShadow(ctx)
+  registerWebFetchShadow(ctx)
   // Official compaction prompt engine (replaces the compaction-basic row in
   // the compaction realm; the row's isolate keeps it per-preset).
   if (config.engine === 'zcode') {

@@ -59,3 +59,12 @@ D. 测试：todo schema/输出形状/优先级 sidecar 往返；agent 路由（�
 | 28 | EnterPlanMode 工具化 | ❌ 需 runtime 模式切换 seam；exit_plan_mode 语义已等价 |
 
 工具 shadow 关键机制结论：子代理经 toolFilter 解析到 preset scope 的 shadow 行（nearest-ancestor shadow），但同名 shadow 内部再按名字分发会命中自身——nested dispatch 必须绕过 scope 解析（run_code bridge 走 TOOL_RUNTIME_SCHEDULER 直调核心定义），bash 场景无独立核心名可用，故放弃 shadow。
+
+## 第三轮（约束：零 DSH 源码改动）
+
+| 项 | 结论 |
+|---|---|
+| WebFetch 官方三件套 | ✅ 全部收进 preset 包（webfetch-shadow.ts）：http→https 升级、跨源重定向 REDIRECT DETECTED notice、15 分钟 per-URL 缓存（LRU 刷新），官方 WEBFETCH_DESCRIPTION 逐字 + url/prompt 契约。经公开 ctx.web (WebRuntime) seam 委托，无 shadow 自递归问题。上轮对 tool-web/web-fetch-http 的源码改动已回退，全局 lib 恢复原版 |
+| Bash shadow | 维持方案 C（跨层 get），同样是零 DSH 源码改动 |
+| 约束验证 | git status: packages/web 零改动；全局 dsh-tool-web/dsh-web-fetch-http 从 pristine 源码重建 |
+
