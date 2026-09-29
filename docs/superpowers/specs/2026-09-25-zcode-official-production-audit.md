@@ -81,3 +81,12 @@ D. 测试：todo schema/输出形状/优先级 sidecar 往返；agent 路由（�
 | Desktop Context section | 不做（DSH Web GUI 宿主已注入同源文案，重复） |
 | goal-state-change reminder | 需 runtime（core goal 事件面，preset 层无持久化写入口） |
 
+## 第五轮（三路对照审计：字节级 / 逐字移植 / 部署行为）
+
+| 路 | 结论 |
+|---|---|
+| 字节级完整性 | **PASS**：fetch.ts/policy.ts 两点 diff vs origin/master = 0 行；全局 dsh-tool-web/dsh-web-fetch-http lib 与 npm registry 发布版 cmp 逐字节一致；分支独有改动仅剩白名单路径（preset 包/patch/docs/.gitignore） |
+| 逐字移植抽查 | **PASS**：identity（intro 逐字）、memory（MEMORY.md 锚点）、compact（9 段结构）、todoReminderBody（官方 formatTodoListForReminder `N. [status] content` 逐字，官方 reminder 不含 priority） |
+| 部署行为 | **PASS**：真实部署会话日志的 system prompt 标题序列 = Harness → Communicating → Session-specific guidance → Memory → Environment → Context management → ZCode tool semantics → Git（最后），与官方 builder.ts 顺序一致；web_fetch 的 request 描述含官方 "cached for 15 minutes" |
+| 已知有意偏差 | 官方工具语义不镜像进 system prompt（由 tools 字段承载）；我们的 "ZCode tool semantics" section 是有意适配——DSH 的 tools 字段承载的是 DSH 原生描述，官方语义需在 prompt 侧补齐 |
+
