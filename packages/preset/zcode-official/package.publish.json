@@ -29,7 +29,13 @@
     "@deepseek-ai/dsh-jobs": "*",
     "@deepseek-ai/dsh-session-projection": "*",
     "@deepseek-ai/dsh-agent": "*",
-    "@deepseek-ai/dsh-llm": "*"
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-session": "*",
+    "@deepseek-ai/dsh-web": "*",
+    "@deepseek-ai/dsh-util-values": "*",
+    "@deepseek-ai/dsh-user-questions": "*",
+    "@deepseek-ai/dsh-plan-mode": "*",
+    "@deepseek-ai/dsh-compaction-basic": "*"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "*",
@@ -39,7 +45,13 @@
     "@deepseek-ai/dsh-session-projection": "*",
     "@deepseek-ai/dsh-subagent": "*",
     "@deepseek-ai/dsh-system-prompt": "*",
-    "@deepseek-ai/dsh-tools": "*"
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-session": "*",
+    "@deepseek-ai/dsh-web": "*",
+    "@deepseek-ai/dsh-util-values": "*",
+    "@deepseek-ai/dsh-user-questions": "*",
+    "@deepseek-ai/dsh-plan-mode": "*",
+    "@deepseek-ai/dsh-compaction-basic": "*"
   },
   "files": [
     "NOTICE-PORTED.md",

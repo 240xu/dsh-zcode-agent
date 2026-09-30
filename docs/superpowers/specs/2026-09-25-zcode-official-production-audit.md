@@ -90,3 +90,25 @@ D. 测试：todo schema/输出形状/优先级 sidecar 往返；agent 路由（�
 | 部署行为 | **PASS**：真实部署会话日志的 system prompt 标题序列 = Harness → Communicating → Session-specific guidance → Memory → Environment → Context management → ZCode tool semantics → Git（最后），与官方 builder.ts 顺序一致；web_fetch 的 request 描述含官方 "cached for 15 minutes" |
 | 已知有意偏差 | 官方工具语义不镜像进 system prompt（由 tools 字段承载）；我们的 "ZCode tool semantics" section 是有意适配——DSH 的 tools 字段承载的是 DSH 原生描述，官方语义需在 prompt 侧补齐 |
 
+## 第六轮（npm 包实装验证 + 0.2.0 升级事故修复）
+
+**事故**：dsh 宿主 9-29 升级 0.1.7-rc.2 → 0.2.0-rc.2，抹掉了 fix-termux.sh 给 dsh-headless 打的 preset 挂载补丁——整个 profile overlay（persona/provider/sections/shadows）静默失效。表象（tarball 装完功能全灭）误导为包问题；二分定位（源码树 lib 直拷同样失效 + persona 前缀消失 + --dump-config 树正常）锁定真因，重跑 fix-termux.sh 修复。
+
+**npm tarball 实装全矩阵（zco-final.tgz，含幽灵 peer 补声明）**：
+
+| 项 | 结果 |
+|---|---|
+| 包加载 + exports | PASS（apply/inject/ZcodeCompactionEngine/20+ builders） |
+| todo priority 往返 | PASS（high 接受） |
+| bash 官方 timeout 参数 | PASS（timeout 4000） |
+| Agent/Explore 路由 | PASS（EXPLORE-TAR-OK） |
+| web_fetch https+官方描述 | PASS（title 返回；官方 15min 缓存语义） |
+| ask_user 官方 schema | PASS（header/options/multiSelect 接受；headless 无应答者为预期） |
+| section 顺序 | PASS（Harness→Communicating→Session-specific guidance→Memory→Environment→Context management→tool semantics→Git） |
+| AGENTS.md 注入 | PASS |
+| reminders/compact | 单测 30/30 覆盖（boot 零错误） |
+
+**打包审计（专家）**：32 文件/74.7kB，lib 与源码树 cmp 逐字节一致、d.ts 10/10、无 @deepseek-ai 内联、files 白名单自洽——全 PASS。**依赖链审计（专家）**：宿主 0.2.0-rc.2 下 import 链完整；6 个幽灵依赖（dsh-session/dsh-web/dsh-util-values/dsh-user-questions/dsh-plan-mode/dsh-compaction-basic）已补进两个 manifest 的 peerDependencies。
+
+**运维教训**：dsh 升级后必须重跑 ~/.dsh/fix-termux.sh（步骤 4.5 重新挂 preset 补丁），否则 headless 下 profile 静默退回默认组合。
+
