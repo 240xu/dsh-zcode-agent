@@ -56,12 +56,14 @@ export class ZcodeCompactionEngine extends BasicCompactionEngine {
     agent: Agent,
     signal?: AbortSignal,
   ): Promise<SummaryResult> {
-    const fallback = { provider: 'deepseek-official', model: 'deepseek-chat' }
-    const target = conversationTarget(agent)
-      ?? (this.config.summarizationProvider.length > 0
-        ? { provider: this.config.summarizationProvider, model: this.config.summarizationModel }
-        : fallback)
-    const config = resolveTargetPolicy(this.config as unknown as ResolvedConfigShape, target) as ZcodeCompactionEngine['config']
+    // 0.2.0 two-layer resolution (mirrors BasicCompactionEngine.summarize +
+    // summarizeWithLlm): outer policy resolution via conversationTarget
+    // (routed header ?? agent options), inner call target with official
+    // priority configured ?? latest ?? agentTarget — fail-closed when none.
+    const policyTarget = conversationTarget(agent)
+    const config = policyTarget === undefined
+      ? this.config
+      : resolveTargetPolicy(this.config as unknown as ResolvedConfigShape, policyTarget) as ZcodeCompactionEngine['config']
 
     const instruction = buildCompactPrompt(undefined)
       // DSH lands the summary inside a durable checkpoint wrapper; a later
@@ -77,9 +79,21 @@ export class ZcodeCompactionEngine extends BasicCompactionEngine {
         content: [{ type: 'text' as const, text: instruction }],
       },
     ]
+    const configured = config.summarizationProvider.length > 0
+      ? { provider: config.summarizationProvider, model: config.summarizationModel }
+      : undefined
+    const latest = routedTargetOf(agent)
+    const agentTarget = (agent.options.provider !== undefined && agent.options.provider.length > 0
+      && agent.options.model !== undefined && agent.options.model.length > 0)
+      ? { provider: agent.options.provider, model: agent.options.model }
+      : undefined
+    const callTarget = configured ?? latest ?? agentTarget
+    if (callTarget === undefined) {
+      throw new Error('no provider/model available for summarization: set both BasicCompactionConfig summarization fields, route one request, or set both AgentOptions fields')
+    }
     const options = {
-      provider: target.provider,
-      model: target.model,
+      provider: callTarget.provider,
+      model: callTarget.model,
       messages,
       ...input.tools === undefined ? {} : { tools: [...input.tools] },
       maxTokens: config.maxTokens,
@@ -125,11 +139,24 @@ interface ResolvedConfigShape {
 // conversationTarget / resolveTargetPolicy are internal to compaction-basic;
 // mirror their public behavior (routed target policy falls back to this.config).
 function conversationTarget(agent: Agent): { provider: string; model: string } | undefined {
+  // 0.2.0 conversationTarget: routed session header first, then agent options.
+  const routed = routedTargetOf(agent)
+  if (routed !== undefined) return routed
   const provider = agent.options.provider
   const model = agent.options.model
   return provider !== undefined && provider.length > 0 && model !== undefined && model.length > 0
     ? { provider, model }
     : undefined
+}
+
+/** 0.2.0 routedTarget: the session's latest routed request header. */
+function routedTargetOf(agent: Agent): { provider: string; model: string } | undefined {
+  const header = (agent.session as unknown as { requestHeader?: () => { config?: { provider: string; model: string } } | undefined }).requestHeader?.()
+  const config = header?.config
+  if (config === undefined || config.provider.length === 0 || config.model.length === 0) {
+    return undefined
+  }
+  return { provider: config.provider, model: config.model }
 }
 
 function resolveTargetPolicy(

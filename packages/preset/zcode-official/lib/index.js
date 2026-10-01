@@ -321,7 +321,7 @@ function registerAskUserShadow(ctx) {
 import { defineTool as defineTool3 } from "@deepseek-ai/dsh-tools";
 var MAX_BASH_TIMEOUT_MS = 6e5;
 function registerBashShadow(ctx) {
-  ctx.tools.register(defineTool3({
+  const ownDefinition = defineTool3({
     name: "bash",
     // Model-facing description comes from the official tool-semantics
     // section; the registry only needs a stable one-line summary.
@@ -372,7 +372,8 @@ function registerBashShadow(ctx) {
       );
       return nested;
     }
-  }));
+  });
+  ctx.tools.register(ownDefinition);
 }
 
 // src/tools/webfetch-shadow.ts
@@ -602,9 +603,8 @@ var ZcodeCompactionEngine = class extends BasicCompactionEngine {
    * 9-section prompt instead of the core Markdown-checkpoint instruction.
    */
   async summarize(input, agent, signal) {
-    const fallback = { provider: "deepseek-official", model: "deepseek-chat" };
-    const target = conversationTarget(agent) ?? (this.config.summarizationProvider.length > 0 ? { provider: this.config.summarizationProvider, model: this.config.summarizationModel } : fallback);
-    const config = resolveTargetPolicy(this.config, target);
+    const policyTarget = conversationTarget(agent);
+    const config = policyTarget === void 0 ? this.config : resolveTargetPolicy(this.config, policyTarget);
     const instruction = buildCompactPrompt(void 0) + "\n\n- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.";
     const assembler = new BlockAssembler();
     const messages = [
@@ -614,9 +614,16 @@ var ZcodeCompactionEngine = class extends BasicCompactionEngine {
         content: [{ type: "text", text: instruction }]
       }
     ];
+    const configured = config.summarizationProvider.length > 0 ? { provider: config.summarizationProvider, model: config.summarizationModel } : void 0;
+    const latest = routedTargetOf(agent);
+    const agentTarget = agent.options.provider !== void 0 && agent.options.provider.length > 0 && agent.options.model !== void 0 && agent.options.model.length > 0 ? { provider: agent.options.provider, model: agent.options.model } : void 0;
+    const callTarget = configured ?? latest ?? agentTarget;
+    if (callTarget === void 0) {
+      throw new Error("no provider/model available for summarization: set both BasicCompactionConfig summarization fields, route one request, or set both AgentOptions fields");
+    }
     const options = {
-      provider: target.provider,
-      model: target.model,
+      provider: callTarget.provider,
+      model: callTarget.model,
       messages,
       ...input.tools === void 0 ? {} : { tools: [...input.tools] },
       maxTokens: config.maxTokens,
@@ -648,9 +655,19 @@ var ZcodeCompactionEngine = class extends BasicCompactionEngine {
   }
 };
 function conversationTarget(agent) {
+  const routed = routedTargetOf(agent);
+  if (routed !== void 0) return routed;
   const provider = agent.options.provider;
   const model = agent.options.model;
   return provider !== void 0 && provider.length > 0 && model !== void 0 && model.length > 0 ? { provider, model } : void 0;
+}
+function routedTargetOf(agent) {
+  const header = agent.session.requestHeader?.();
+  const config = header?.config;
+  if (config === void 0 || config.provider.length === 0 || config.model.length === 0) {
+    return void 0;
+  }
+  return { provider: config.provider, model: config.model };
 }
 function resolveTargetPolicy(config, target) {
   const policy = config.modelPolicies?.find((p) => p.provider === target.provider && p.model === target.model);
@@ -1328,6 +1345,16 @@ var PLAN_MODE_REMINDER_CONFIG = Object.freeze({
   FULL_REMINDER_EVERY_N_ATTACHMENTS: 5
 });
 var states = /* @__PURE__ */ new Map();
+function todoWriteVisible(agent) {
+  try {
+    const ctxAny = agent.ctx;
+    const tools = ctxAny?.tools;
+    if (tools === void 0) return true;
+    return tools.get("todo_write", agent) !== void 0;
+  } catch {
+    return true;
+  }
+}
 function stateFor(agent) {
   const key = String(agent.session.id);
   let s = states.get(key);
@@ -1352,22 +1379,19 @@ function todoReminderBody(todos) {
   return lines.join("\n");
 }
 function installReminders(agentCtx, getTodos, isPlanMode) {
-  agentCtx.on("agent/pre-step", async ({ agent, turn, step, signal }, next) => {
+  agentCtx.on("agent/pre-step", async ({ agent, step, signal }, next) => {
     const decision = await next();
     signal.throwIfAborted();
     if (decision.kind === "reject") return decision;
     if (step === 1 && decision.messages.length === 0) return decision;
     const state = stateFor(agent);
-    if (turn > state.lastCountedTurn) {
-      state.turnsSinceTodoWrite++;
-      state.turnsSinceTodoReminder++;
-      state.turnsSincePlanReminder++;
-      state.lastCountedTurn = turn;
-    }
+    state.turnsSinceTodoWrite++;
+    state.turnsSinceTodoReminder++;
+    state.turnsSincePlanReminder++;
     const planMode = await isPlanMode(agent);
     if (!planMode) resetCountersOnPlanMode(state);
     const reminders = [];
-    if (!planMode && state.turnsSinceTodoWrite >= TODO_REMINDER_CONFIG.TURNS_SINCE_WRITE && state.turnsSinceTodoReminder >= TODO_REMINDER_CONFIG.TURNS_BETWEEN_REMINDERS) {
+    if (state.turnsSinceTodoWrite >= TODO_REMINDER_CONFIG.TURNS_SINCE_WRITE && state.turnsSinceTodoReminder >= TODO_REMINDER_CONFIG.TURNS_BETWEEN_REMINDERS && todoWriteVisible(agent)) {
       const todos = await getTodos(agent) ?? [];
       reminders.push(todoReminderBody(todos));
       state.turnsSinceTodoReminder = 0;

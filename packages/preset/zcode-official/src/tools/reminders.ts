@@ -46,6 +46,20 @@ interface ReminderState {
 
 const states = new Map<string, ReminderState>()
 
+/** Official turn-loop gate: the todo reminder only fires while TodoWrite is
+ * visible in the agent's scope (shadow row name: 'todo_write'). When the
+ * agent carries no inspectable tool registry, default to visible. */
+function todoWriteVisible(agent: Agent): boolean {
+  try {
+    const ctxAny = (agent as unknown as { ctx?: { tools?: { get: (n: string, s?: unknown) => unknown } } }).ctx
+    const tools = ctxAny?.tools
+    if (tools === undefined) return true
+    return tools.get('todo_write', agent) !== undefined
+  } catch {
+    return true
+  }
+}
+
 function stateFor(agent: Agent): ReminderState {
   const key = String(agent.session.id)
   let s = states.get(key)
@@ -81,31 +95,32 @@ function todoReminderBody(todos: Array<{ content: string; status: string; priori
  *   the preset mount joining the agent).
  */
 export function installReminders(agentCtx: { on: (event: 'agent/pre-step', listener: (payload: { agent: Agent; turn: number; step: number; signal: AbortSignal }, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>) => unknown }, getTodos: (agent: Agent) => Promise<Array<{ content: string; status: string; priority: string }>> | undefined, isPlanMode: (agent: Agent) => boolean | Promise<boolean>): void {
-  agentCtx.on('agent/pre-step', async ({ agent, turn, step, signal }, next) => {
+  agentCtx.on('agent/pre-step', async ({ agent, step, signal }, next) => {
     const decision = await next()
     signal.throwIfAborted()
     if (decision.kind === 'reject') return decision
     if (step === 1 && decision.messages.length === 0) return decision
 
     const state = stateFor(agent)
-    // Turn counting: pre-step fires per STEP; one turn = its step-1 entry.
-    // Count each new model turn (turn >= 1, not yet counted).
-    if (turn > state.lastCountedTurn) {
-      state.turnsSinceTodoWrite++
-      state.turnsSinceTodoReminder++
-      state.turnsSincePlanReminder++
-      state.lastCountedTurn = turn
-    }
+    // Official counting basis (getTodoReminderTurnCounts): every assistant
+    // entry counts — each model response, including tool-call continuation
+    // steps. Count every entering pre-step.
+    state.turnsSinceTodoWrite++
+    state.turnsSinceTodoReminder++
+    state.turnsSincePlanReminder++
 
     const planMode = await isPlanMode(agent)
     if (!planMode) resetCountersOnPlanMode(state)
 
     const reminders: string[] = []
 
-    // Todo reminder: official cadence (TURNS_SINCE_WRITE 10 / BETWEEN 10) —
-    // skipped entirely in plan mode (official gate: plan turns don't nag).
-    if (!planMode && state.turnsSinceTodoWrite >= TODO_REMINDER_CONFIG.TURNS_SINCE_WRITE
-        && state.turnsSinceTodoReminder >= TODO_REMINDER_CONFIG.TURNS_BETWEEN_REMINDERS) {
+    // Todo reminder: official cadence (TURNS_SINCE_WRITE 10 / BETWEEN 10).
+    // Official turn-loop gate: skipped only while TodoWrite is invisible in
+    // this agent's scope (plan mode keeps TodoWrite visible — the reminder
+    // fires there too, mirroring the official behavior).
+    if (state.turnsSinceTodoWrite >= TODO_REMINDER_CONFIG.TURNS_SINCE_WRITE
+        && state.turnsSinceTodoReminder >= TODO_REMINDER_CONFIG.TURNS_BETWEEN_REMINDERS
+        && todoWriteVisible(agent)) {
       const todos = (await getTodos(agent)) ?? []
       reminders.push(todoReminderBody(todos))
       state.turnsSinceTodoReminder = 0

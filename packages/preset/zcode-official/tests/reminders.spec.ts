@@ -103,10 +103,10 @@ describe('plan-mode reminder cadence (official 5/5)', () => {
     expect(reminderTexts[1]).toContain('Plan mode still active')
   })
 
-  it('T6: plan mode skips the todo reminder entirely', async () => {
+  it('T6: plan mode does NOT suppress the todo reminder (official turn-loop has no plan gate)', async () => {
     const { run, reminderTexts } = harness({ planMode: true, todos: [{ content: 'x', status: 'pending', priority: 'low' }] })
-    for (let turn = 1; turn <= 12; turn++) await run(turn)
-    for (const t of reminderTexts) expect(t).not.toContain("TodoWrite tool hasn't been used")
+    for (let turn = 1; turn <= 10; turn++) await run(turn)
+    expect(reminderTexts.some(t => t.includes("TodoWrite tool hasn't been used"))).toBe(true)
   })
   it('T7: reminder messages carry the <system-reminder> wrapper and declared source', async () => {
     const { run, reminderTexts } = harness()

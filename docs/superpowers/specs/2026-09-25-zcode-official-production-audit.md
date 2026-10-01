@@ -112,3 +112,18 @@ D. 测试：todo schema/输出形状/优先级 sidecar 往返；agent 路由（�
 
 **运维教训**：dsh 升级后必须重跑 ~/.dsh/fix-termux.sh（步骤 4.5 重新挂 preset 补丁），否则 headless 下 profile 静默退回默认组合。
 
+## 第七轮（全员交叉验证：8 智能体独立复核）
+
+| 审计员 | 结论 | 修复动作 |
+|---|---|---|
+| gap-scout | 语义备注/工具名/description 抽查无偏差；快照非 git repo 记存疑 | — |
+| runtime-architect | **0.2.0 已原生支持 headless preset 挂载**（fix-termux 补丁变 no-op）；四 seam 签名未变；测试 d.ts 零错位；部署副本版本号陈旧（仅版本号，代码一致） | bump 版本留待下次发布 |
+| compact-engineer | **2 偏差**：fail-closed 被静默 fallback 打破；target 优先级颠倒（缺 session 路由层） | ✅ 已修：删 fallback+照抄官方错误文本；复刻 0.2.0 两层解析（routed header→options；configured??latest??agentTarget） |
+| bash-shadow-fixer | 自递归/签名/透传无偏差；2 小问题：render JSON 降级（P2）、哨兵死代码（P3） | ✅ 哨兵改身份比较生效；P2 记录待办 |
+| webfetch-aligner | 四项（重定向正则/结果形状/描述逐字/https 单层）全无偏差；notice url 仅 origin 级保真度备注 | — |
+| reminder-verifier | **3 偏差**：计数口径应为每 assistant entry（含工具续步）非每用户 turn；缺 TodoWrite 可见性门；plan 跳过 todo 是非官方行为 | ✅ 全修：逐 entry 计数、加 todoWriteVisible 门（默认放行）、删 plan-skip、T6 改官方语义 |
+| deep-diff-scanner | 待回报 | — |
+| audit-reviewer | 基于旧会话（9/25，section 修复前）的报告已过时；identity 三重叠加中 persona 前缀已清（dump-config 确认 prefix:''）；残留 baseline 行为宿主自带不可移除 | ✅ persona prefix 置空 |
+
+30/30 测试绿。第五轮验证报告中"persona 前缀残留"复查为宿主 baseline 自带（非 patch），已记 known deviation。
+

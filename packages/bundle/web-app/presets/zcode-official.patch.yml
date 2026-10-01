@@ -29,7 +29,9 @@
             name: '@deepseek-ai/dsh-persona'
             config:
               suffix: Your working directory is {{cwd}}.
-              prefix: You are ZCode, an interactive coding agent.
+              # Official identity intro rides the zcode-official section; a
+              # second persona prefix would duplicate the identity line.
+              prefix: ''
           - id: zcode-official
             name: '@deepseek-ai/dsh-zcode-official'
           - id: agent-instructions

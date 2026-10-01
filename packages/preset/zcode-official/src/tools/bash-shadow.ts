@@ -34,7 +34,7 @@ interface CoreDefinition {
 }
 
 export function registerBashShadow(ctx: Context): void {
-  ctx.tools.register(defineTool({
+  const ownDefinition = defineTool({
     name: 'bash',
     // Model-facing description comes from the official tool-semantics
     // section; the registry only needs a stable one-line summary.
@@ -89,5 +89,6 @@ export function registerBashShadow(ctx: Context): void {
       )
       return nested as Record<string, import('@deepseek-ai/dsh-util-values').JsonValue>
     },
-  }))
+  })
+  ctx.tools.register(ownDefinition)
 }
