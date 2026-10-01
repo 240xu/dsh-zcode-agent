@@ -1672,14 +1672,63 @@ var ZCODE_NAME = {
 };
 var PARAMETER_NOTES = {
   bash: "ZCode parameter: `timeout` in milliseconds (default 120000, max 600000); `run_in_background` runs detached and re-invokes you on exit.",
-  edit: "ZCode requires the file to have been Read in this conversation before editing; `old_string` must match exactly including indentation and be unique; `replace_all` replaces every occurrence.",
+  edit: [
+    "ZCode parameter descriptions (contracts/src/tools/edit.ts, verbatim):",
+    '- file_path: "The absolute path to the file to modify"',
+    '- old_string: "The text to replace"',
+    '- new_string: "The text to replace it with (must be different from old_string)"',
+    '- replace_all: "Replace all occurrences of old_string (default false)"',
+    "The file must have been Read in this conversation before editing, or the call fails."
+  ].join("\n"),
+  write: [
+    "ZCode parameter descriptions (contracts/src/tools/write.ts, verbatim):",
+    '- file_path: "The absolute path to the file to write (must be absolute, not relative)"',
+    '- content: "The content to write to the file"'
+  ].join("\n"),
+  read: [
+    "ZCode parameter descriptions (contracts/src/tools/read.ts, verbatim):",
+    '- file_path: "The absolute path to the file to read"',
+    "- offset/limit: optional (especially handy for long files), but it's recommended to read the whole file by not providing these parameters"
+  ].join("\n"),
+  glob: 'ZCode parameter (contracts/src/tools/glob.ts, verbatim): pattern = "The glob pattern to match files against".',
+  grep: [
+    "ZCode parameter descriptions (contracts/src/tools/grep.ts, verbatim):",
+    '- pattern: "The regular expression pattern to search for in file contents"',
+    '- -i: "Case insensitive search (rg -i)"'
+  ].join("\n"),
+  task: [
+    "ZCode parameter descriptions (contracts/src/tools/agent.ts, verbatim):",
+    '- description: "A short (3-5 word) description of the task"',
+    '- prompt: "The task for the agent to perform"',
+    '- subagent_type: "The type of specialized agent to use for this task"'
+  ].join("\n"),
   web_search: "ZCode notes results are US-only.",
   goal_read: "DSH-specific (no ZCode counterpart): the goal text is the authoritative long-running objective; do not mark the goal complete without real evidence of achievement \u2014 a finished plan or todo list is not completion evidence.",
   skill: "ZCode session guidance, verbatim:\n- When the user types `/<skill-name>`, invoke it via Skill. Only use skills listed in the user-invocable skills section \u2014 don't guess."
 };
 var SURFACE_NOTES = [
   "- `EnterPlanMode` / `ExitPlanMode`: plan mode in this deployment is entered by the user (`/plan`); `exit_plan_mode` submits the plan for approval. A user's conversational agreement approves nothing \u2014 only exiting plan mode requests approval.",
-  "- `SendMessage` (`send_message`): Send a message to another agent. Your plain text output is NOT visible to other agents \u2014 to communicate, you MUST call this tool. Messages from agents are delivered automatically; you don't check an inbox. Refer to local agents by the `agentId` returned in the Agent spawn result. To resume a completed agent, use its `agentId`; it resumes in the background and you'll be notified when it finishes.",
+  [
+    "- `SendMessage` (`send_message`) \u2014 official handler description (send-message.ts, verbatim):",
+    '  "# SendMessage',
+    "  ",
+    "  Send a message to another agent.",
+    "  ",
+    "  ```json",
+    '  {\\"to\\": \\"agent_<uuid>\\", \\"summary\\": \\"assign task 1\\", \\"message\\": \\"start on task #1\\"}',
+    "  ```",
+    "  ",
+    "  Your plain text output is NOT visible to other agents \u2014 to communicate, you MUST call this tool. Messages from agents are delivered automatically; you don't check an inbox. Refer to local agents by the `agentId` returned in the Agent spawn result. To resume a completed agent, use its `agentId`; it resumes in the background and you'll be notified when it finishes.\"",
+    "  In this deployment `to` takes the continuable agent id from the Agent result footer."
+  ].join("\n"),
+  [
+    "- `TaskStop` \u2014 official handler description (task-stop.ts, verbatim):",
+    '  "- Stops a running background task by its ID',
+    "  - Takes a task_id parameter identifying the task to stop",
+    "  - Returns a success or failure status",
+    '  - Use this tool when you need to terminate a long-running task".',
+    "  In this deployment the equivalents are `job_kill` (background jobs) and `interrupt_agent` (teammates)."
+  ].join("\n"),
   "- `ListModels`: this deployment has no dynamic-workflow host; the model catalog surfaces through the harness model-selection mechanism instead. The session model is the user's choice and only the user changes it.",
   "- `TaskOutput` is DEPRECATED upstream: never poll for background results; collect finished background work with `job_output` (wait only when genuinely blocked) and stop irrelevant work with `job_kill` (`TaskStop`).",
   "- `ApplyPatch`: the official registry ships it disabled (commented out) \u2014 perform patch-style edits with `write`/`edit` directly.",

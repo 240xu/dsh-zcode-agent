@@ -127,3 +127,21 @@ D. 测试：todo schema/输出形状/优先级 sidecar 往返；agent 路由（�
 
 30/30 测试绿。第五轮验证报告中"persona 前缀残留"复查为宿主 baseline 自带（非 patch），已记 known deviation。
 
+## 第八轮（"能照抄的就照抄"清点）
+
+**已逐字照抄覆盖**（核对确认）：14 个 tool description builders（read/write/edit/bash/glob/grep/webfetch/websearch/todo×2/skill/agent/task/ask_user）、9 个官方 section、compact 9 段 prompt、plan workflow、subagent personas、reminder body+格式、3 个 shadow schema（bash/ask-user/webfetch）。
+
+**本轮新照抄**（官方参数级 describe → PARAMETER_NOTES verbatim）：
+- edit：file_path/old_string/new_string/replace_all 四条官方 describe 逐字
+- write：file_path/content 逐字
+- read：file_path 逐字 + offset/limit 官方建议句
+- glob：pattern 逐字
+- grep：pattern 逐字 + -i 逐字
+- task（agent.ts）：description/prompt/subagent_type 三条逐字
+
+**本轮新照抄**（SURFACE_NOTES 官方 handler 描述逐字）：
+- SendMessage：官方 SEND_MESSAGE_PROVIDER_DESCRIPTION 全文（含 JSON 示例；部署注记 to=continuable agent id）
+- TaskStop：官方 TASK_STOP_PROVIDER_DESCRIPTION 逐字（部署注记等价物 job_kill/interrupt_agent）
+
+**无法照抄的（结构性差异，非文本）**：currentDate 注入面（官方 meta_user vs DSH system section）；skills/requestUserContext（DSH 侧由 tool-skill/agent-instructions 等价承载）；"powered by the model named" 行（依赖官方 model 探测字段，我们 env-live 未采集 model 时按官方条件同样省略）。
+
