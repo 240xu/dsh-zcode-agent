@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-zcode-official",
   "description": "ZCode preset plugin ported from the official open-source zai-org/ZCode (v3.14.0) sources: identity, dynamic behavior, env info, memory, plan workflow, and tool description builders. Apache-2.0 (official sources); see NOTICE-PORTED.md.",
-  "version": "0.1.7-rc.1",
+  "version": "0.2.0-rc.1",
   "publishConfig": {
     "access": "public"
   },
@@ -35,7 +35,8 @@
     "@deepseek-ai/dsh-util-values": "workspace:^",
     "@deepseek-ai/dsh-user-questions": "workspace:^",
     "@deepseek-ai/dsh-plan-mode": "workspace:^",
-    "@deepseek-ai/dsh-compaction-basic": "workspace:^"
+    "@deepseek-ai/dsh-compaction-basic": "workspace:^",
+    "@deepseek-ai/dsh-sandbox": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
@@ -51,7 +52,8 @@
     "@deepseek-ai/dsh-util-values": "workspace:^",
     "@deepseek-ai/dsh-user-questions": "workspace:^",
     "@deepseek-ai/dsh-plan-mode": "workspace:^",
-    "@deepseek-ai/dsh-compaction-basic": "workspace:^"
+    "@deepseek-ai/dsh-compaction-basic": "workspace:^",
+    "@deepseek-ai/dsh-sandbox": "workspace:^"
   },
   "files": [
     "NOTICE-PORTED.md",

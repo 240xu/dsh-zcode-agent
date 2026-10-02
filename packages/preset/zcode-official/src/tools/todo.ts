@@ -109,7 +109,7 @@ export function registerTodoTools(ctx: Context): void {
       todos: {
         type: 'array',
         required: true,
-        description: 'The COMPLETE task list, replacing any previous list.',
+        description: 'The complete updated todo list. At most one item may be in_progress at a time.',
         items: {
           type: 'object',
           additionalProperties: false,

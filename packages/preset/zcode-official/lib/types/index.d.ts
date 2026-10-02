@@ -35,18 +35,18 @@ export interface ZcodeEnv {
     };
 }
 /** Pure assembly so tests can assert section text without mounting cordis. */
-export declare function buildSections(env: ZcodeEnv): ZcodeSection[];
+export declare function buildSections(env: ZcodeEnv, hasSkills?: boolean): ZcodeSection[];
 /** Tool + prompt dependencies: sections ride systemPrompt; the official todo
  * and Agent rows shadow the core rows inside the preset scope; the compaction
  * engine rides the compaction realm. */
-export declare const inject: readonly ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions", "web"];
+export declare const inject: readonly ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions", "web", "skills"];
 export interface ZcodePresetConfig {
     /** When 'zcode', mount ZcodeCompactionEngine instead of the core row. */
     engine?: 'zcode';
 }
 export declare function apply(ctx: Context, config?: ZcodePresetConfig & {
     role?: 'preset' | 'compaction';
-}): void;
+}): Promise<void>;
 export { collectEnvInfo, memoryRootFor, localIsoDate };
 export { EXPLORE_AGENT_TYPE, GENERAL_PURPOSE_AGENT_TYPE, buildExploreAgentPrompt, buildGeneralPurposeSystemPrompt, buildSubagentCommonNotes, buildSubagentEnvironmentContext, EXPLORE_AGENT_ALLOWED_TOOLS, formatExploreAllowedToolsForAgentDescription, builtInAgentProfiles, } from './official/subagents.ts';
 export { buildPlanWorkflow, buildPlanModeFullReminderBody, buildPlanModeSparseReminderBody, } from './official/plan-workflow.ts';

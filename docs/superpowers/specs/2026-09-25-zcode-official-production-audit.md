@@ -159,3 +159,20 @@ D. 测试：todo schema/输出形状/优先级 sidecar 往返；agent 路由（�
 | Agent AgentOutput 结构化 JSON | 官方模型可见文本 = formatAgentOutputForModel 渲染（非裸 JSON）；completed 的 <usage> 块需 tool_uses/totalTokens 计数 seam（DSH 无）——async_launched 文案与空输出句已照抄，usage 块记需 runtime | 部分照抄+记录 |
 | 后台 <task-notification> XML | DSH jobs 通知注入点在 core，需 runtime | 记录 |
 
+## 第十轮（缺陷登记簿 + 字节级审核闭环）
+
+**字节级审核（专家 A/B/C）结果**：
+- C（lib 一致性）：重建 cmp 一致 ✓；发现并修复 lib/types 悬空引用（重新全量 tsc 产出 18 个 .d.ts，missing=NONE）；发现并修复 dsh-sandbox 幽灵 peer；版本 bump 0.2.0-rc.1；部署副本已重装同步（cmp 四项全过：lib/版本/peer/d.ts）。
+- B（shadow vs contracts）：8 处漂移——5 处已照抄修复（bash description 多行 prompt、bash run_in_background 官方句、ask-user question 双示例、todo todos 官方句、agent async 尾巴句），3 处记录（SendMessage→send_message DSH 化 ×2 属工具名映射、<usage> 块需 runtime）。
+- A（official/ 逐字）：deep-diff-scanner 网络故障未回报，由 compact-engineer 判定任务覆盖关键面；补扫待下一轮。
+
+**缺陷登记簿判定**（compact-engineer）：
+- D1 session-guidance →【已修】ctx.skills.snapshot 公开面 gate（async apply + hasSkills 参数），零技能会话不再多注入
+- D4 currentDate →【已修】官方 meta_user 语义镜像：删除 order:490 system section，改为首 entry 用户侧 <system-reminder># currentDate 注入（经 reminders seam）；跨午夜由 date-change reminder 接管
+- D2 <usage> →【记录不修】duration 可算但 tool_uses/totalTokens 无 seam，单独 duration 价值低
+- D3 task-notification →【需 runtime】tool-jobs 内组装后 owner.inject，preset 拦截过脆
+- D5 redirect notice origin 级 →【需 runtime 优先】provider.ts:96 丢弃完整 URL，与工具描述承诺矛盾，建议上游排期
+- D6/D7/D8/D10/D12 → 维持 WONTFIX/记录
+
+**测试**：30/30 绿（sections 测试同步更新：date section 移除）。**部署实测**：用户侧 currentDate reminder 注入确认、system 侧 section 已移除。
+

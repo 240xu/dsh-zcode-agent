@@ -26,6 +26,9 @@
       ],
       "@deepseek-ai/dsh-plan-mode": [
         "/data/data/com.termux/files/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-plan-mode/lib/types/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-skill": [
+        "/data/data/com.termux/files/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-skill/lib/types/index.d.ts"
       ]
     },
     "allowImportingTsExtensions": true,

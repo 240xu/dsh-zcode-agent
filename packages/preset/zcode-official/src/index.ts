@@ -23,6 +23,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-plan-mode'
+import type {} from '@deepseek-ai/dsh-skill'
 import { registerTodoTools, todoPriorityOf } from './tools/todo.ts'
 import { registerAskUserShadow } from './tools/ask-user-shadow.ts'
 import { registerBashShadow } from './tools/bash-shadow.ts'
@@ -168,7 +169,7 @@ export interface ZcodeEnv {
 }
 
 /** Pure assembly so tests can assert section text without mounting cordis. */
-export function buildSections(env: ZcodeEnv): ZcodeSection[] {
+export function buildSections(env: ZcodeEnv, hasSkills = true): ZcodeSection[] {
   const info: EnvInfoText = collectEnvInfo(env.cwd)
   const profileRoster = formatAgentProfilesForPrompt(builtInAgentProfiles())
   const descriptions: Record<string, string> = {
@@ -207,6 +208,7 @@ export function buildSections(env: ZcodeEnv): ZcodeSection[] {
   }
   // Official builder.ts order: cli-prefix → identity → DynamicBehavior →
   // SessionGuidance → Memory → EnvInfo → ContextManagement → Git (last).
+  const guidance = buildSessionGuidanceText(['Skill'], hasSkills)
   const sections: ZcodeSection[] = [
     { name: 'zcode-official:cli-prefix', order: 50, text: CLI_PREFIX_PROMPT },
     {
@@ -215,14 +217,13 @@ export function buildSections(env: ZcodeEnv): ZcodeSection[] {
       text: ['', 'You are an interactive ZCode agent that helps users with software engineering tasks.', '', buildSecurityNotice(), '', buildHarnessBlock()].join('\n'),
     },
     { name: 'zcode-official:dynamic-behavior', order: 110, text: buildDynamicBehaviorText() },
-    ...buildSessionGuidanceText(['Skill'], true) !== null
-      ? [{ name: 'zcode-official:session-guidance', order: 115, text: buildSessionGuidanceText(['Skill'], true)! }]
-      : [],
+    ...guidance !== null ? [{ name: 'zcode-official:session-guidance', order: 115, text: guidance }] : [],
     { name: 'zcode-official:memory', order: 250, text: buildMemoryText(memoryRootFor(env.cwd)) },
     { name: 'zcode-official:env', order: 300, text: buildEnvText(info, env.model) },
     { name: 'zcode-official:context-management', order: 330, text: buildContextManagementText() },
     { name: 'zcode-official:tool-semantics', order: 460, text: blocks.join('\n').trimEnd() },
-    { name: 'zcode-official:date', order: 490, text: `# currentDate\nToday's date is ${localIsoDate()}.` },
+    // Official currentDate rides meta_user (user-side attachment), mirrored
+    // by the reminders module's first-entry injection — not a system section.
   ]
   if (info.isGitRepository) {
     sections.splice(8, 0, { name: 'zcode-official:sysctx', order: 470, text: buildGitSystemContextText(info) })
@@ -233,14 +234,14 @@ export function buildSections(env: ZcodeEnv): ZcodeSection[] {
 /** Tool + prompt dependencies: sections ride systemPrompt; the official todo
  * and Agent rows shadow the core rows inside the preset scope; the compaction
  * engine rides the compaction realm. */
-export const inject = ['systemPrompt', 'tools', 'sessionProjections', 'subagents', 'userQuestions', 'web'] as const
+export const inject = ['systemPrompt', 'tools', 'sessionProjections', 'subagents', 'userQuestions', 'web', 'skills'] as const
 
 export interface ZcodePresetConfig {
   /** When 'zcode', mount ZcodeCompactionEngine instead of the core row. */
   engine?: 'zcode'
 }
 
-export function apply(ctx: Context, config: ZcodePresetConfig & { role?: 'preset' | 'compaction' } = {}): void {
+export async function apply(ctx: Context, config: ZcodePresetConfig & { role?: 'preset' | 'compaction' } = {}): Promise<void> {
   // The compaction realm's row mounts the same package with role 'compaction'
   // (engine-only); the main preset row mounts sections + tools.
   if (config.role === 'compaction') {
@@ -288,8 +289,15 @@ export function apply(ctx: Context, config: ZcodePresetConfig & { role?: 'preset
     if (exec.agent !== undefined && exec.name === 'exit_plan_mode') notePlanExit(exec.agent)
     return next()
   })
+  let hasSkills = true
+  try {
+    const snap = await ctx.skills.snapshot({ cwd: env.cwd })
+    hasSkills = Array.isArray(snap?.skills) ? snap.skills.length > 0 : true
+  } catch {
+    hasSkills = true
+  }
   ctx.effect(function* () {
-    for (const section of buildSections(env)) {
+    for (const section of buildSections(env, hasSkills)) {
       yield ctx.systemPrompt.section({
         name: section.name,
         order: section.order,

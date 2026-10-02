@@ -133,6 +133,7 @@ export function renderAgentResult(value: { kind: 'foreground'; runId: string; ou
       'Async agent launched successfully.',
       `agentId: ${value.backgroundTaskId} (internal ID - do not mention to user. Use send_message with to: '${value.backgroundTaskId}' to continue this agent.)`,
       'The agent is working in the background. You will be notified automatically when it completes.',
+      "Briefly tell the user what you launched and end your response. Do not generate any other text - agent results will arrive in a subsequent message.",
     ].join('\n') }]
   }
   const finalText = textOf(value.output)

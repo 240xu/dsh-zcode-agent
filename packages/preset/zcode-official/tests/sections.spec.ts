@@ -96,7 +96,7 @@ describe('section assembly', () => {
   it('emits the full ordered section list', () => {
     const s = buildSections({ cwd: CWD })
     const names = s.map((x) => x.name)
-    for (const n of ['zcode-official:cli-prefix', 'zcode-official:identity', 'zcode-official:dynamic-behavior', 'zcode-official:context-management', 'zcode-official:env', 'zcode-official:memory', 'zcode-official:tool-semantics', 'zcode-official:date']) {
+    for (const n of ['zcode-official:cli-prefix', 'zcode-official:identity', 'zcode-official:dynamic-behavior', 'zcode-official:context-management', 'zcode-official:env', 'zcode-official:memory', 'zcode-official:tool-semantics']) {
       expect(names).toContain(n)
     }
     const orders = s.map((x) => x.order)

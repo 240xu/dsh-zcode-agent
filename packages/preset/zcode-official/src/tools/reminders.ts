@@ -47,6 +47,8 @@ interface ReminderState {
   pendingPlanExit: boolean
   /** Local ISO date last seen at a pre-step (date-change reminder trigger). */
   lastSeenDate: string
+  /** Whether the official currentDate anchor has been injected (first entry). */
+  dateInjected: boolean
 }
 
 const states = new Map<string, ReminderState>()
@@ -69,7 +71,7 @@ function stateFor(agent: Agent): ReminderState {
   const key = String(agent.session.id)
   let s = states.get(key)
   if (s === undefined) {
-    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0, lastPlanCountedTurn: 0, pendingPlanExit: false, lastSeenDate: '' }
+    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0, lastPlanCountedTurn: 0, pendingPlanExit: false, lastSeenDate: '', dateInjected: false }
     states.set(key, s)
   }
   return s
@@ -122,6 +124,14 @@ export function installReminders(agentCtx: { on: (event: 'agent/pre-step', liste
     }
 
     const reminders: string[] = []
+
+    // Official currentDate section rides meta_user (user-side) — mirror by
+    // injecting the anchor as a first-entry user-side reminder.
+    if (!state.dateInjected) {
+      state.dateInjected = true
+      state.lastSeenDate = localIsoDate()
+      reminders.push(`# currentDate\nToday's date is ${state.lastSeenDate}.`)
+    }
 
     // Date-change reminder (official buildDateChangeReminderBody, verbatim):
     // long-running sessions crossing midnight re-anchor the model's date.

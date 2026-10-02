@@ -159,11 +159,23 @@ export function registerBashShadow(ctx: Context): void {
       },
       description: {
         type: 'string',
-        description: 'Clear, concise description of what this command does in active voice, 5-10 words (shown in the UI).',
+        description: [
+          'Clear, concise description of what this command does in active voice. Never use words like "complex" or "risk" in the description - just describe what it does.',
+          '',
+          'For simple commands (git, npm, standard CLI tools), keep it brief (5-10 words):',
+          '- ls → "List files in current directory"',
+          '- git status → "Show working tree status"',
+          '- npm install → "Install package dependencies"',
+          '',
+          'For commands that are harder to parse at a glance (piped commands, obscure flags, etc.), add enough context to clarify what it does:',
+          '- find . -name "*.tmp" -exec rm {} \\; → "Find and delete all .tmp files recursively"',
+          '- git reset --hard origin/main → "Discard all local changes and match remote main"',
+          "- curl -s url | jq '.data[]' → \"Fetch JSON from URL and extract data array elements\"",
+        ].join('\n'),
       },
       run_in_background: {
         type: 'boolean' as const,
-        description: 'Run in the background and return a job id immediately (collect with job_output, stop with job_kill). No timeout applies.',
+        description: 'Set to true to run this command in the background.',
       },
     },
     output: {

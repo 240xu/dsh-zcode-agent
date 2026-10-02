@@ -29,7 +29,7 @@ function harness(opts: { todos?: Array<{ content: string; status: string; priori
     if (decision.kind === 'enter') {
       for (const m of decision.messages) {
         const blocks = ((m as UserMessage).content ?? []) as Array<{ type: string; text?: string }>
-        for (const b of blocks) if (b.type === 'text' && b.text?.includes('<system-reminder>')) { reminderTexts.push(b.text) }
+        for (const b of blocks) if (b.type === 'text' && b.text?.includes('<system-reminder>') && !b.text?.includes('# currentDate')) { reminderTexts.push(b.text) }
       }
     }
     return decision
@@ -48,7 +48,7 @@ describe('todo reminder cadence (official 10/10)', () => {
       if (d.kind === 'enter') {
         for (const m of d.messages) {
           const blocks = ((m as UserMessage).content ?? []) as Array<{ type: string; text?: string }>
-          for (const b of blocks) if (b.type === 'text' && b.text?.includes('<system-reminder>')) texts.push(b.text)
+          for (const b of blocks) if (b.type === 'text' && b.text?.includes('<system-reminder>') && !b.text?.includes('# currentDate')) texts.push(b.text)
         }
       }
       if (texts.length > injectionTurns.length) injectionTurns.push(turn)

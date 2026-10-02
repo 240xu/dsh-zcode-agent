@@ -46,7 +46,7 @@ function registerTodoTools(ctx) {
       todos: {
         type: "array",
         required: true,
-        description: "The COMPLETE task list, replacing any previous list.",
+        description: "The complete updated todo list. At most one item may be in_progress at a time.",
         items: {
           type: "object",
           additionalProperties: false,
@@ -243,7 +243,7 @@ function registerAskUserShadow(ctx) {
             question: {
               type: "string",
               required: true,
-              description: "The complete question to ask the user. Should be clear, specific, and end with a question mark. If multiSelect is true, phrase it accordingly."
+              description: 'The complete question to ask the user. Should be clear, specific, and end with a question mark. Example: "Which library should we use for date formatting?" If multiSelect is true, phrase it accordingly, e.g. "Which features do you want to enable?"'
             },
             header: {
               type: "string",
@@ -392,11 +392,23 @@ function registerBashShadow(ctx) {
       },
       description: {
         type: "string",
-        description: "Clear, concise description of what this command does in active voice, 5-10 words (shown in the UI)."
+        description: [
+          'Clear, concise description of what this command does in active voice. Never use words like "complex" or "risk" in the description - just describe what it does.',
+          "",
+          "For simple commands (git, npm, standard CLI tools), keep it brief (5-10 words):",
+          '- ls \u2192 "List files in current directory"',
+          '- git status \u2192 "Show working tree status"',
+          '- npm install \u2192 "Install package dependencies"',
+          "",
+          "For commands that are harder to parse at a glance (piped commands, obscure flags, etc.), add enough context to clarify what it does:",
+          '- find . -name "*.tmp" -exec rm {} \\; \u2192 "Find and delete all .tmp files recursively"',
+          '- git reset --hard origin/main \u2192 "Discard all local changes and match remote main"',
+          `- curl -s url | jq '.data[]' \u2192 "Fetch JSON from URL and extract data array elements"`
+        ].join("\n")
       },
       run_in_background: {
         type: "boolean",
-        description: "Run in the background and return a job id immediately (collect with job_output, stop with job_kill). No timeout applies."
+        description: "Set to true to run this command in the background."
       }
     },
     output: {
@@ -1187,7 +1199,8 @@ function renderAgentResult(value) {
     return [{ type: "text", text: [
       "Async agent launched successfully.",
       `agentId: ${value.backgroundTaskId} (internal ID - do not mention to user. Use send_message with to: '${value.backgroundTaskId}' to continue this agent.)`,
-      "The agent is working in the background. You will be notified automatically when it completes."
+      "The agent is working in the background. You will be notified automatically when it completes.",
+      "Briefly tell the user what you launched and end your response. Do not generate any other text - agent results will arrive in a subsequent message."
     ].join("\n") }];
   }
   const finalText = textOf(value.output);
@@ -1441,7 +1454,7 @@ function stateFor(agent) {
   const key = String(agent.session.id);
   let s = states.get(key);
   if (s === void 0) {
-    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0, lastPlanCountedTurn: 0, pendingPlanExit: false, lastSeenDate: "" };
+    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0, lastPlanCountedTurn: 0, pendingPlanExit: false, lastSeenDate: "", dateInjected: false };
     states.set(key, s);
   }
   return s;
@@ -1474,6 +1487,12 @@ function installReminders(agentCtx, getTodos, isPlanMode) {
       state.turnsSincePlanReminder = 0;
     }
     const reminders = [];
+    if (!state.dateInjected) {
+      state.dateInjected = true;
+      state.lastSeenDate = localIsoDate();
+      reminders.push(`# currentDate
+Today's date is ${state.lastSeenDate}.`);
+    }
     const today = localIsoDate();
     if (state.lastSeenDate !== "" && state.lastSeenDate !== today) {
       reminders.push(`The date has changed. Today's date is now ${today}. DO NOT mention this to the user explicitly because they are already aware.`);
@@ -1838,7 +1857,7 @@ var SURFACE_NOTES = [
   "- `CronCreate`/`CronList`/`CronUpdate`/`CronDelete` (persistent workspace automations) and `OffPeakCreate`/`OffPeakList` (server off-peak queue) have no counterpart in this deployment; for in-session scheduled reminders use the available schedule tools.",
   "- The official `Js` (node_repl) tool is disabled by default upstream too; this deployment's equivalent is `run_code` (PTC mode)."
 ];
-function buildSections(env) {
+function buildSections(env, hasSkills = true) {
   const info = collectEnvInfo(env.cwd);
   const profileRoster = formatAgentProfilesForPrompt(builtInAgentProfiles());
   const descriptions = {
@@ -1875,6 +1894,7 @@ function buildSections(env) {
     if (note !== void 0) blocks.push("", note);
     blocks.push("");
   }
+  const guidance = buildSessionGuidanceText(["Skill"], hasSkills);
   const sections = [
     { name: "zcode-official:cli-prefix", order: 50, text: CLI_PREFIX_PROMPT },
     {
@@ -1883,21 +1903,21 @@ function buildSections(env) {
       text: ["", "You are an interactive ZCode agent that helps users with software engineering tasks.", "", buildSecurityNotice(), "", buildHarnessBlock()].join("\n")
     },
     { name: "zcode-official:dynamic-behavior", order: 110, text: buildDynamicBehaviorText() },
-    ...buildSessionGuidanceText(["Skill"], true) !== null ? [{ name: "zcode-official:session-guidance", order: 115, text: buildSessionGuidanceText(["Skill"], true) }] : [],
+    ...guidance !== null ? [{ name: "zcode-official:session-guidance", order: 115, text: guidance }] : [],
     { name: "zcode-official:memory", order: 250, text: buildMemoryText(memoryRootFor(env.cwd)) },
     { name: "zcode-official:env", order: 300, text: buildEnvText(info, env.model) },
     { name: "zcode-official:context-management", order: 330, text: buildContextManagementText() },
-    { name: "zcode-official:tool-semantics", order: 460, text: blocks.join("\n").trimEnd() },
-    { name: "zcode-official:date", order: 490, text: `# currentDate
-Today's date is ${localIsoDate()}.` }
+    { name: "zcode-official:tool-semantics", order: 460, text: blocks.join("\n").trimEnd() }
+    // Official currentDate rides meta_user (user-side attachment), mirrored
+    // by the reminders module's first-entry injection — not a system section.
   ];
   if (info.isGitRepository) {
     sections.splice(8, 0, { name: "zcode-official:sysctx", order: 470, text: buildGitSystemContextText(info) });
   }
   return sections;
 }
-var inject = ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions", "web"];
-function apply(ctx, config = {}) {
+var inject = ["systemPrompt", "tools", "sessionProjections", "subagents", "userQuestions", "web", "skills"];
+async function apply(ctx, config = {}) {
   if (config.role === "compaction") {
     ctx.plugin(ZcodeCompactionEngine);
     return;
@@ -1937,8 +1957,15 @@ function apply(ctx, config = {}) {
     if (exec.agent !== void 0 && exec.name === "exit_plan_mode") notePlanExit(exec.agent);
     return next();
   });
+  let hasSkills = true;
+  try {
+    const snap = await ctx.skills.snapshot({ cwd: env.cwd });
+    hasSkills = Array.isArray(snap?.skills) ? snap.skills.length > 0 : true;
+  } catch {
+    hasSkills = true;
+  }
   ctx.effect(function* () {
-    for (const section of buildSections(env)) {
+    for (const section of buildSections(env, hasSkills)) {
       yield ctx.systemPrompt.section({
         name: section.name,
         order: section.order,

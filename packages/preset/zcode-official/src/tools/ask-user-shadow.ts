@@ -106,7 +106,7 @@ export function registerAskUserShadow(ctx: Context): void {
             question: {
               type: 'string',
               required: true,
-              description: 'The complete question to ask the user. Should be clear, specific, and end with a question mark. If multiSelect is true, phrase it accordingly.',
+              description: 'The complete question to ask the user. Should be clear, specific, and end with a question mark. Example: "Which library should we use for date formatting?" If multiSelect is true, phrase it accordingly, e.g. "Which features do you want to enable?"',
             },
             header: {
               type: 'string',
