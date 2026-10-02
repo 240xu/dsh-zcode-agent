@@ -29,7 +29,7 @@ import { registerBashShadow } from './tools/bash-shadow.ts'
 import { registerWebFetchShadow } from './tools/webfetch-shadow.ts'
 import { ZcodeCompactionEngine } from './tools/compaction-zcode.ts'
 import { registerAgentTool } from './tools/agent.ts'
-import { installReminders, noteTodoWrite } from './tools/reminders.ts'
+import { installReminders, noteTodoWrite, notePlanExit } from './tools/reminders.ts'
 import { buildSecurityNotice, buildHarnessBlock } from './official/identity.ts'
 
 /** Service dependencies: the system prompt section registry. */
@@ -284,7 +284,8 @@ export function apply(ctx: Context, config: ZcodePresetConfig & { role?: 'preset
     )
   })
   ctx.on('tools/post-execute', async (exec, _result, next) => {
-    if (exec.name === 'todo_write' && exec.agent !== undefined) noteTodoWrite(exec.agent)
+    if (exec.agent !== undefined && exec.name === 'todo_write') noteTodoWrite(exec.agent)
+    if (exec.agent !== undefined && exec.name === 'exit_plan_mode') notePlanExit(exec.agent)
     return next()
   })
   ctx.effect(function* () {

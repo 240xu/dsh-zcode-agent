@@ -19,6 +19,7 @@ import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { buildPlanModeSparseReminderBody, buildPlanModeFullReminderBody } from '../official/plan-workflow.ts'
+import { localIsoDate } from '../env-live.ts'
 
 const TODO_REMINDER_CONFIG = Object.freeze({
   TURNS_SINCE_WRITE: 10,
@@ -32,16 +33,20 @@ const PLAN_MODE_REMINDER_CONFIG = Object.freeze({
 
 /** Per-agent reminder bookkeeping (process-local, like the official runtime's). */
 interface ReminderState {
-  /** Assistant turns since the last todo/write (or since start). */
+  /** Assistant entries since the last todo/write (or since start). */
   turnsSinceTodoWrite: number
-  /** Assistant turns since the last todo reminder. */
+  /** Assistant entries since the last todo reminder. */
   turnsSinceTodoReminder: number
   /** How many plan-mode reminders have been attached (drives full vs sparse). */
   planReminderCount: number
-  /** Assistant turns since the last plan reminder. */
+  /** Human turns since the last plan reminder (official: real_user messages). */
   turnsSincePlanReminder: number
-  /** Last turn number already counted (pre-step fires per step, not per turn). */
-  lastCountedTurn: number
+  /** Last turn number already counted for the plan counter (per human turn). */
+  lastPlanCountedTurn: number
+  /** Set when the agent exits plan mode; the next entry carries the exit reminder. */
+  pendingPlanExit: boolean
+  /** Local ISO date last seen at a pre-step (date-change reminder trigger). */
+  lastSeenDate: string
 }
 
 const states = new Map<string, ReminderState>()
@@ -64,15 +69,15 @@ function stateFor(agent: Agent): ReminderState {
   const key = String(agent.session.id)
   let s = states.get(key)
   if (s === undefined) {
-    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0, lastCountedTurn: 0 }
+    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0, lastPlanCountedTurn: 0, pendingPlanExit: false, lastSeenDate: '' }
     states.set(key, s)
   }
   return s
 }
 
-function resetCountersOnPlanMode(s: ReminderState): void {
-  s.planReminderCount = 0
-  s.turnsSincePlanReminder = 0
+/** Called when the agent leaves plan mode (exit_plan_mode post-execute). */
+export function notePlanExit(agent: Agent): void {
+  stateFor(agent).pendingPlanExit = true
 }
 
 /** Official buildTodoReminderBody (verbatim, with the todo list rendered). */
@@ -110,9 +115,28 @@ export function installReminders(agentCtx: { on: (event: 'agent/pre-step', liste
     state.turnsSincePlanReminder++
 
     const planMode = await isPlanMode(agent)
-    if (!planMode) resetCountersOnPlanMode(state)
+    if (!planMode) {
+      // Official countRuntimeModeReminders is history-wide: re-entering plan
+      // continues at N+1 (sparse), so planReminderCount is never reset.
+      state.turnsSincePlanReminder = 0
+    }
 
     const reminders: string[] = []
+
+    // Date-change reminder (official buildDateChangeReminderBody, verbatim):
+    // long-running sessions crossing midnight re-anchor the model's date.
+    const today = localIsoDate()
+    if (state.lastSeenDate !== '' && state.lastSeenDate !== today) {
+      reminders.push(`The date has changed. Today's date is now ${today}. DO NOT mention this to the user explicitly because they are already aware.`)
+    }
+    state.lastSeenDate = today
+
+    // Plan-mode exit reminder (official needsPlanModeExitReminder): attached
+    // on the first entry after the agent leaves plan mode.
+    if (state.pendingPlanExit && !planMode) {
+      state.pendingPlanExit = false
+      reminders.push(planModeExitReminderBody())
+    }
 
     // Todo reminder: official cadence (TURNS_SINCE_WRITE 10 / BETWEEN 10).
     // Official turn-loop gate: skipped only while TodoWrite is invisible in
@@ -151,6 +175,15 @@ export function installReminders(agentCtx: { on: (event: 'agent/pre-step', liste
     }) as UserMessage)
     return { ...decision, messages: [...decision.messages, ...injected] }
   })
+}
+
+/** Official buildPlanModeExitReminderBody (runtime-reminders.ts, verbatim). */
+function planModeExitReminderBody(): string {
+  return [
+    '## Exited Plan Mode',
+    '',
+    'You have exited plan mode. You can now make edits, run tools, and take actions.',
+  ].join('\n')
 }
 
 /** Called by the todo tool row on every successful write. */

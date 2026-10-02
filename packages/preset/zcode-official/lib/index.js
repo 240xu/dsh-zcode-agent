@@ -319,8 +319,66 @@ function registerAskUserShadow(ctx) {
 
 // src/tools/bash-shadow.ts
 import { defineTool as defineTool3 } from "@deepseek-ai/dsh-tools";
+import { ESCALATION_TARGETS, escalationHintMarker, sandboxDenialMarker } from "@deepseek-ai/dsh-sandbox";
 var MAX_BASH_TIMEOUT_MS = 6e5;
+function shadowStreamText(output) {
+  if (!output.truncated) return output.text;
+  return `${output.text}
+[output truncated; full output: ${output.spillPath ?? "(unavailable)"}]`;
+}
+function shadowRenderResult(result, escalationModes) {
+  const out = shadowStreamText(result.stdout);
+  const err = shadowStreamText(result.stderr);
+  let body = out;
+  if (err.length > 0) {
+    if (body.length > 0 && !body.endsWith("\n")) body += "\n";
+    body += `[stderr]
+${err}`;
+  }
+  if (body.length === 0) body = "(no output)";
+  const markers = [];
+  if (result.sandbox?.denied) {
+    markers.push(sandboxDenialMarker(result.sandbox.mode));
+    if (escalationModes.length > 0) {
+      markers.push(escalationHintMarker("command"));
+    }
+  }
+  if (result.timedOut) markers.push(`[timed out after ${result.timeoutMs}ms]`);
+  if (result.stopped !== void 0) markers.push(`[stopped: ${result.stopped}]`);
+  if (result.signal !== null) {
+    markers.push(`[killed by signal: ${result.signal}]`);
+  } else if (result.exitCode !== 0) {
+    markers.push(`[exit code: ${result.exitCode}]`);
+  }
+  if (markers.length === 0) return body;
+  if (!body.endsWith("\n")) body += "\n";
+  return body + markers.join("\n");
+}
+function shadowRenderPromoted(promoted) {
+  const body = promoted.output.length > 0 ? promoted.output.endsWith("\n") ? promoted.output : `${promoted.output}
+` : "";
+  return `${body}[still running after ${promoted.timeoutMs}ms; moved to background job ${promoted.jobId}]
+The command keeps running in the background. You will be notified when it finishes; read newer output with job_output, stop it with job_kill.`;
+}
+function renderShadowValue(value, escalationModes) {
+  if (typeof value === "object" && value !== null && "kind" in value) {
+    const record = value;
+    if (record.kind === "background" && "jobId" in record) {
+      return `started background job ${String(record.jobId)}`;
+    }
+    if (record.kind === "promoted" && "jobId" in record && "timeoutMs" in record) {
+      return shadowRenderPromoted({
+        jobId: String(record.jobId),
+        timeoutMs: Number(record.timeoutMs),
+        output: typeof record.output === "string" ? record.output : ""
+      });
+    }
+  }
+  return shadowRenderResult(value, escalationModes);
+}
 function registerBashShadow(ctx) {
+  const shellExecutor = ctx.get("shell");
+  const escalationModes = shellExecutor?.sandboxMode === void 0 ? [] : ESCALATION_TARGETS;
   const ownDefinition = defineTool3({
     name: "bash",
     // Model-facing description comes from the official tool-semantics
@@ -343,7 +401,7 @@ function registerBashShadow(ctx) {
     },
     output: {
       schema: { type: "object", additionalProperties: true, properties: {} },
-      render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }]
+      render: (_args, value) => [{ type: "text", text: renderShadowValue(value, escalationModes) }]
     },
     async execute(args, exec) {
       if (args.command.trim().length === 0) {
@@ -387,6 +445,7 @@ var WEBFETCH_DESCRIPTION = [
   "- Responses are cached for 15 minutes per URL."
 ].join("\n");
 var CACHE_TTL_MS = 15 * 60 * 1e3;
+var CACHE_MAX_BYTES = 50 * 1024 * 1024;
 var cache = /* @__PURE__ */ new Map();
 function readCache(url) {
   const entry = cache.get(url);
@@ -400,6 +459,24 @@ function readCache(url) {
   return entry.result;
 }
 function writeCache(url, result) {
+  const sizeBytes = result.body.kind === "text" ? Buffer.byteLength(result.body.content) : 0;
+  if (sizeBytes > CACHE_MAX_BYTES) return;
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (now - entry.cachedAt > CACHE_TTL_MS) cache.delete(key);
+  }
+  let total = sizeBytes;
+  for (const entry of cache.values()) {
+    total += entry.result.body.kind === "text" ? Buffer.byteLength(entry.result.body.content) : 0;
+  }
+  for (const key of cache.keys()) {
+    if (total <= CACHE_MAX_BYTES) break;
+    const entry = cache.get(key);
+    cache.delete(key);
+    if (entry !== void 0) {
+      total -= entry.result.body.kind === "text" ? Buffer.byteLength(entry.result.body.content) : 0;
+    }
+  }
   cache.delete(url);
   cache.set(url, { result, cachedAt: Date.now() });
 }
@@ -1107,10 +1184,15 @@ function renderAgentResult(value) {
     return [{ type: "text", text: `Agent running with ID: ${value.subagentId} (use send_message with agent_id '${value.subagentId}' to continue this agent)` }];
   }
   if (value.kind === "background") {
-    return [{ type: "text", text: `Agent running in background with ID: ${value.backgroundTaskId}. You will be notified when it completes.` }];
+    return [{ type: "text", text: [
+      "Async agent launched successfully.",
+      `agentId: ${value.backgroundTaskId} (internal ID - do not mention to user. Use send_message with to: '${value.backgroundTaskId}' to continue this agent.)`,
+      "The agent is working in the background. You will be notified automatically when it completes."
+    ].join("\n") }];
   }
   const finalText = textOf(value.output);
-  return [{ type: "text", text: `${finalText}
+  const childText = finalText.trim().length > 0 ? finalText : "(Subagent completed but returned no output.)";
+  return [{ type: "text", text: `${childText}
 agentId: ${value.runId} (use send_message with agent_id '${value.runId}' to continue this agent)` }];
 }
 function textOf(output) {
@@ -1359,14 +1441,13 @@ function stateFor(agent) {
   const key = String(agent.session.id);
   let s = states.get(key);
   if (s === void 0) {
-    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0, lastCountedTurn: 0 };
+    s = { turnsSinceTodoWrite: 0, turnsSinceTodoReminder: 0, planReminderCount: 0, turnsSincePlanReminder: 0, lastPlanCountedTurn: 0, pendingPlanExit: false, lastSeenDate: "" };
     states.set(key, s);
   }
   return s;
 }
-function resetCountersOnPlanMode(s) {
-  s.planReminderCount = 0;
-  s.turnsSincePlanReminder = 0;
+function notePlanExit(agent) {
+  stateFor(agent).pendingPlanExit = true;
 }
 function todoReminderBody(todos) {
   const lines = [
@@ -1389,8 +1470,19 @@ function installReminders(agentCtx, getTodos, isPlanMode) {
     state.turnsSinceTodoReminder++;
     state.turnsSincePlanReminder++;
     const planMode = await isPlanMode(agent);
-    if (!planMode) resetCountersOnPlanMode(state);
+    if (!planMode) {
+      state.turnsSincePlanReminder = 0;
+    }
     const reminders = [];
+    const today = localIsoDate();
+    if (state.lastSeenDate !== "" && state.lastSeenDate !== today) {
+      reminders.push(`The date has changed. Today's date is now ${today}. DO NOT mention this to the user explicitly because they are already aware.`);
+    }
+    state.lastSeenDate = today;
+    if (state.pendingPlanExit && !planMode) {
+      state.pendingPlanExit = false;
+      reminders.push(planModeExitReminderBody());
+    }
     if (state.turnsSinceTodoWrite >= TODO_REMINDER_CONFIG.TURNS_SINCE_WRITE && state.turnsSinceTodoReminder >= TODO_REMINDER_CONFIG.TURNS_BETWEEN_REMINDERS && todoWriteVisible(agent)) {
       const todos = await getTodos(agent) ?? [];
       reminders.push(todoReminderBody(todos));
@@ -1415,6 +1507,13 @@ ${text}
     }));
     return { ...decision, messages: [...decision.messages, ...injected] };
   });
+}
+function planModeExitReminderBody() {
+  return [
+    "## Exited Plan Mode",
+    "",
+    "You have exited plan mode. You can now make edits, run tools, and take actions."
+  ].join("\n");
 }
 function noteTodoWrite(agent) {
   const s = stateFor(agent);
@@ -1834,7 +1933,8 @@ function apply(ctx, config = {}) {
     );
   });
   ctx.on("tools/post-execute", async (exec, _result, next) => {
-    if (exec.name === "todo_write" && exec.agent !== void 0) noteTodoWrite(exec.agent);
+    if (exec.agent !== void 0 && exec.name === "todo_write") noteTodoWrite(exec.agent);
+    if (exec.agent !== void 0 && exec.name === "exit_plan_mode") notePlanExit(exec.agent);
     return next();
   });
   ctx.effect(function* () {

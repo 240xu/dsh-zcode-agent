@@ -126,10 +126,22 @@ export function renderAgentResult(value: { kind: 'foreground'; runId: string; ou
     return [{ type: 'text', text: `Agent running with ID: ${value.subagentId} (use send_message with agent_id '${value.subagentId}' to continue this agent)` }]
   }
   if (value.kind === 'background') {
-    return [{ type: 'text', text: `Agent running in background with ID: ${value.backgroundTaskId}. You will be notified when it completes.` }]
+    // Official formatAgentOutputForModel async_launched rendering (verbatim;
+    // the official output-file lines are omitted — DSH jobs expose output via
+    // job_output instead of a file path).
+    return [{ type: 'text', text: [
+      'Async agent launched successfully.',
+      `agentId: ${value.backgroundTaskId} (internal ID - do not mention to user. Use send_message with to: '${value.backgroundTaskId}' to continue this agent.)`,
+      'The agent is working in the background. You will be notified automatically when it completes.',
+    ].join('\n') }]
   }
   const finalText = textOf(value.output)
-  return [{ type: 'text', text: `${finalText}\nagentId: ${value.runId} (use send_message with agent_id '${value.runId}' to continue this agent)` }]
+  // Official formatAgentOutputForModel completed rendering: empty child
+  // output gets the official placeholder sentence.
+  const childText = finalText.trim().length > 0
+    ? finalText
+    : '(Subagent completed but returned no output.)'
+  return [{ type: 'text', text: `${childText}\nagentId: ${value.runId} (use send_message with agent_id '${value.runId}' to continue this agent)` }]
 }
 
 /** Model-visible text blocks of a content-block array. */

@@ -9,12 +9,21 @@
  * scheduler.prepare attempt). The core definition receives this row's
  * ToolRunContext, so sandbox policy, shellEnv, jobs and cancellation all
  * pass through unchanged.
+ *
+ * The model-facing render replicates `@deepseek-ai/dsh-tool-bash`'s
+ * `render.ts` (`renderResult` / `renderPromoted` / background line) instead
+ * of JSON.stringify: those functions are not exported from that package's
+ * entry, so the shadow ports the text verbatim and imports the shared
+ * sandbox markers from `@deepseek-ai/dsh-sandbox` to keep the vocabulary
+ * single-sourced.
  * @module @deepseek-ai/dsh-zcode-official/tools/bash-shadow
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { ESCALATION_TARGETS, escalationHintMarker, sandboxDenialMarker, type SandboxMode } from '@deepseek-ai/dsh-sandbox'
+import type {} from '@deepseek-ai/dsh-shell'
 
 export const inject = ['tools'] as const
 
@@ -33,7 +42,110 @@ interface CoreDefinition {
   execute: (args: unknown, exec: unknown) => Promise<unknown>
 }
 
+/** Canonical output side of one collected stream ({text, truncated, spillPath?}). */
+interface ShadowStream {
+  text: string
+  truncated: boolean
+  spillPath?: string
+}
+
+/** Structural mirror of the core foreground value (canonicalBashResult shape). */
+interface ShadowForegroundValue {
+  exitCode: number | null
+  signal: string | null
+  timedOut: boolean
+  aborted: boolean
+  timeoutMs: number
+  stdout: ShadowStream
+  stderr: ShadowStream
+  sandbox?: { mode: string; denied: boolean; enforcement?: string; runnerFailed?: boolean }
+  stopped?: string
+}
+
+/** Append the truncation notice (with the full-output spill path) to a stream's text. */
+function shadowStreamText(output: ShadowStream): string {
+  if (!output.truncated) return output.text
+  return `${output.text}\n[output truncated; full output: ${output.spillPath ?? '(unavailable)'}]`
+}
+
+/** Verbatim port of `@deepseek-ai/dsh-tool-bash` render.ts `renderResult`. */
+function shadowRenderResult(result: ShadowForegroundValue, escalationModes: readonly SandboxMode[]): string {
+  const out = shadowStreamText(result.stdout)
+  const err = shadowStreamText(result.stderr)
+
+  let body = out
+  if (err.length > 0) {
+    // Single newline between sections (stdout usually ends with one already).
+    if (body.length > 0 && !body.endsWith('\n')) body += '\n'
+    body += `[stderr]\n${err}`
+  }
+  if (body.length === 0) body = '(no output)'
+
+  const markers: string[] = []
+  // Keep the exit marker last because parseExitStatus anchors there.
+  if (result.sandbox?.denied) {
+    markers.push(sandboxDenialMarker(result.sandbox.mode as SandboxMode))
+    // Hint only when the composition exposes escalation, before the final exit marker.
+    if (escalationModes.length > 0) {
+      markers.push(escalationHintMarker('command'))
+    }
+  }
+  // A command may trap SIGTERM and exit 0 after timeout; still report interruption.
+  if (result.timedOut) markers.push(`[timed out after ${result.timeoutMs}ms]`)
+  // A kill from outside the call (the human stopping its job) is not a
+  // command failure: the reason tells the model not to retry.
+  if (result.stopped !== undefined) markers.push(`[stopped: ${result.stopped}]`)
+  if (result.signal !== null) {
+    markers.push(`[killed by signal: ${result.signal}]`)
+  } else if (result.exitCode !== 0) {
+    markers.push(`[exit code: ${result.exitCode}]`)
+  }
+  if (markers.length === 0) return body
+
+  if (!body.endsWith('\n')) body += '\n'
+  return body + markers.join('\n')
+}
+
+/** Verbatim port of render.ts `renderPromoted`. */
+function shadowRenderPromoted(promoted: { jobId: string; timeoutMs: number; output: string }): string {
+  const body = promoted.output.length > 0
+    ? promoted.output.endsWith('\n') ? promoted.output : `${promoted.output}\n`
+    : ''
+  return `${body}[still running after ${promoted.timeoutMs}ms; moved to background job ${promoted.jobId}]\n`
+    + 'The command keeps running in the background. You will be notified when it finishes; '
+    + 'read newer output with job_output, stop it with job_kill.'
+}
+
+/**
+ * Branch on the core canonical value kind, matching the core tool's own
+ * `output.render`: background acknowledgements, promoted hand-offs, and
+ * foreground terminals render their human-readable text instead of JSON.
+ */
+export function renderShadowValue(value: unknown, escalationModes: readonly SandboxMode[]): string {
+  if (typeof value === 'object' && value !== null && 'kind' in value) {
+    const record = value as Record<string, unknown>
+    if (record.kind === 'background' && 'jobId' in record) {
+      return `started background job ${String(record.jobId)}`
+    }
+    if (record.kind === 'promoted' && 'jobId' in record && 'timeoutMs' in record) {
+      return shadowRenderPromoted({
+        jobId: String(record.jobId),
+        timeoutMs: Number(record.timeoutMs),
+        output: typeof record.output === 'string' ? record.output : '',
+      })
+    }
+  }
+  return shadowRenderResult(value as ShadowForegroundValue, escalationModes)
+}
+
 export function registerBashShadow(ctx: Context): void {
+  // Mirror the core tool's escalation-mode derivation: the escalation hint
+  // rides a denial only when the composition actually advertises a confining
+  // executor; a composition without one renders the bare denial marker.
+  const shellExecutor = ctx.get('shell') as { sandboxMode?: SandboxMode } | undefined
+  const escalationModes: readonly SandboxMode[] = shellExecutor?.sandboxMode === undefined
+    ? []
+    : ESCALATION_TARGETS
   const ownDefinition = defineTool({
     name: 'bash',
     // Model-facing description comes from the official tool-semantics
@@ -56,7 +168,7 @@ export function registerBashShadow(ctx: Context): void {
     },
     output: {
       schema: { type: 'object', additionalProperties: true, properties: {} },
-      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) } as ContentBlock],
+      render: (_args, value) => [{ type: 'text', text: renderShadowValue(value, escalationModes) } as ContentBlock],
     },
     async execute(args: OfficialBashArgs, exec) {
       if (args.command.trim().length === 0) {

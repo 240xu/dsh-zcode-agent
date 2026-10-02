@@ -145,3 +145,17 @@ D. 测试：todo schema/输出形状/优先级 sidecar 往返；agent 路由（�
 
 **无法照抄的（结构性差异，非文本）**：currentDate 注入面（官方 meta_user vs DSH system section）；skills/requestUserContext（DSH 侧由 tool-skill/agent-instructions 等价承载）；"powered by the model named" 行（依赖官方 model 探测字段，我们 env-live 未采集 model 时按官方条件同样省略）。
 
+## 第九轮（0.2.0 深审：新能力 + schema 完整性 + P2 落地）
+
+| 项 | 结论 | 处置 |
+|---|---|---|
+| 0.2.0 新能力面 | 无 preset 需跟进的新 seam/配置面（core 全为内部健壮性）；reportSkippedBundles 为 0.2.0 新增启动诊断（升级后确认 overlay 生效用） | 记录 |
+| llm-deepseek 行拆分风险 | 核查：zcode-pilot patch 无 llm-deepseek 引用（仅 llm-pi-ai Termux 行），无风险 | 无动作 |
+| bash shadow render P2 | ✅ 落地（bash-shadow-fixer 移植 + lead 补链接）：renderResult/renderPromoted/background 三分支复刻 0.2.0 dsh-tool-bash render.ts，sandbox 标记从 @deepseek-ai/dsh-sandbox 单源引用；实测 render 可读 | 完成 |
+| 官方 async_launched 文案 | ✅ 照抄 formatAgentOutputForModel：Async agent launched successfully + internal ID 行 + 自动通知行 | 完成+测试更新 |
+| 空输出句 | ✅ 照抄 "(Subagent completed but returned no output.)" | 完成 |
+| todo list 外层方括号 | ❌ 深审认为缺 `[...]`——复核官方 formatTodoListForReminder 返回行数组、外层方括号在 buildTodoReminderBody 的 currentTodos 模板（与我们模板一致），非缺失 | 关闭 |
+| session-guidance 零技能多一行 | 小偏差，修复需会话级技能表（runtime 面） | 记录待办 |
+| Agent AgentOutput 结构化 JSON | 官方模型可见文本 = formatAgentOutputForModel 渲染（非裸 JSON）；completed 的 <usage> 块需 tool_uses/totalTokens 计数 seam（DSH 无）——async_launched 文案与空输出句已照抄，usage 块记需 runtime | 部分照抄+记录 |
+| 后台 <task-notification> XML | DSH jobs 通知注入点在 core，需 runtime | 记录 |
+

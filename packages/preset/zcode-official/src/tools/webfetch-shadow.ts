@@ -34,6 +34,11 @@ export const WEBFETCH_DESCRIPTION = [
 /** Official cache TTL (webfetch-cache.ts). */
 const CACHE_TTL_MS = 15 * 60 * 1000
 
+/** Official CACHE_MAX_BYTES (50MB), dual-purpose: entries larger than this
+ * are not cached at all, and the total cached payload is pruned back under
+ * this budget (expired first, then oldest-first eviction). */
+const CACHE_MAX_BYTES = 50 * 1024 * 1024
+
 interface CacheEntry {
   readonly result: WebFetchResult
   readonly cachedAt: number
@@ -60,6 +65,27 @@ function readCache(url: string): WebFetchResult | undefined {
 }
 
 function writeCache(url: string, result: WebFetchResult): void {
+  const sizeBytes = result.body.kind === 'text' ? Buffer.byteLength(result.body.content) : 0
+  // Official: entries over CACHE_MAX_BYTES are skipped entirely.
+  if (sizeBytes > CACHE_MAX_BYTES) return
+  // Official prune: drop expired entries, then evict oldest-first until the
+  // total payload fits the budget.
+  const now = Date.now()
+  for (const [key, entry] of cache) {
+    if (now - entry.cachedAt > CACHE_TTL_MS) cache.delete(key)
+  }
+  let total = sizeBytes
+  for (const entry of cache.values()) {
+    total += entry.result.body.kind === 'text' ? Buffer.byteLength(entry.result.body.content) : 0
+  }
+  for (const key of cache.keys()) {
+    if (total <= CACHE_MAX_BYTES) break
+    const entry = cache.get(key)
+    cache.delete(key)
+    if (entry !== undefined) {
+      total -= entry.result.body.kind === 'text' ? Buffer.byteLength(entry.result.body.content) : 0
+    }
+  }
   cache.delete(url)
   cache.set(url, { result, cachedAt: Date.now() })
 }

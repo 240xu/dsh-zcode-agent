@@ -65,6 +65,9 @@ describe('official Agent multiplexer', () => {
     const cont = renderAgentResult({ kind: 'continuable', subagentId: 'child-2' })
     expect(cont[0].text).toContain("use send_message with agent_id 'child-2'")
     const bg = renderAgentResult({ kind: 'background', backgroundTaskId: 'job-3' })
-    expect(bg[0].text).toContain('Agent running in background with ID: job-3')
+    // Official formatAgentOutputForModel async_launched rendering (verbatim).
+    expect(bg[0].text).toContain('Async agent launched successfully.')
+    expect(bg[0].text).toContain("agentId: job-3 (internal ID - do not mention to user. Use send_message with to: 'job-3' to continue this agent.)")
+    expect(bg[0].text).toContain('The agent is working in the background. You will be notified automatically when it completes.')
   })
 })
