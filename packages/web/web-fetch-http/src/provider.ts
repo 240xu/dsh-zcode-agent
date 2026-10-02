@@ -93,7 +93,7 @@ export class HttpFetchProvider implements WebFetchProvider {
             validatedTarget = validateFetchUrl(target.toString())
             if (!isSameOrigin(validatedTarget, currentUrl)) {
               throw new WebError(
-                `cross-origin redirect to ${validatedTarget.origin} is not followed automatically; retry against that URL directly`,
+                `cross-origin redirect to ${validatedTarget.toString()} is not followed automatically; retry against that URL directly`,
                 'WEB_REDIRECT_BLOCKED',
               )
             }
