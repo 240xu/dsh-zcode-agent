@@ -21,3 +21,35 @@
 
 ## 结论
 **输出质量与官方 ZCode 一致性：高**。prompt 文本逐字对齐 + 工具行为语义对齐 + 同模型，四个维度实测行为与官方设计意图一致。剩余差异均为宿主结构性差异（记录在 defect register），无 preset 可修项。
+
+## 官方 CLI A/B 并排对照（2026-10-06，配置突破后完成）
+
+**突破记录**：官方 CLI v2 配置链最终打通。三个必踩坑（全部实测定位）：
+1. personal 文件结构必须是 `config.providerConfigRules.providerRules`（双层嵌套，codec 契约）
+2. `config.modelConfigRules` 为 **nonoptional** 必填（缺失 → decode 抛 ZodError → 静默 recover 清空 → "Select a model"）
+3. personal provider 必须 `group: "standard-personal"`（complete schema 必填，缺失 → provider 被过滤出 registry）
+
+key 可直接写入 personal rules 的 `access.apiKey`（provider 层允许，仅模板层 omit）。
+
+**A/B 结果**（同 prompt 逐字、同 API 端点 zcode.sepic.space、同模型）：
+
+| 任务 | 官方 CLI | zcode-official preset | 判定 |
+|---|---|---|---|
+| T1 去重函数 | `dedupe` via dict.fromkeys + 保序解释 | `dedup` via dict.fromkeys + 同款解释 | 等价（同解法同理由） |
+| T2 写+改斐波那契 | 创建递归+docstring → 改迭代 → 验证 | 创建递归+docstring → 改迭代 → 验证前 10 项 | 等价（同为完整编辑链） |
+| T5 bash 三命令 | 单次调用、timeout 生效、原样输出 | 单次调用、timeout 生效、原样输出 | 等价 |
+| T7 模糊缓存需求（同目录序列） | 识别目标 → 加 lru_cache 并说明理由 | 识别缓存已被官方 CLI 刚加上 → 实测验证命中行为（4 调 1 命中）→ 拒绝冗余改动 | 两个行为各自正确；preset 展现验证优先纪律 |
+
+T7 备注：早先 preset 在 ~ 下跑的 T7 因无明确目标而选择 ask_user 澄清——同属正确行为（同目录测试消除了该混淆变量）。
+
+## 最终结论
+
+**输出质量与官方 ZCode 一致**：静态逐字对齐 + 四维行为等价 + 同模型。移植未损害输出质量；结构性差异（DSH 宿主 baseline、桥接 section）在实测中未产生可观测的输出退化。
+
+## 配置资产（复现用）
+
+- ~/.zcode/cli/config.json：legacy provider（sepic, anthropic-messages, options.apiKey）
+- ~/.zcode/v2/provider_config.json：personal store（providerConfigRules.providerRules + modelConfigRules 必填 + defaultModelSelection + group: standard-personal）
+- 官方 CLI 运行命令：ZCODE_BASE_URL=https://zcode.sepic.space zcode -p "<prompt>"（builtin 刷新 404/400 警告可忽略）
+- probes：~/probe/（resolver/decode/runtime 三个复刻探针）
+
